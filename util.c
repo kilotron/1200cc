@@ -53,7 +53,7 @@ Vector * new_vec()
 {
 	Vector *v = malloc(sizeof(Vector));
 	v->capacity = 16;
-	v->data = malloc(sizeof(void *) * v->capacity);
+	v->data = (void *)malloc(sizeof(void *) * v->capacity);
 	v->len = 0;	// number of elements in the vector.
 	return v;
 }
@@ -69,17 +69,23 @@ void vec_put(Vector * v, void * elem)
 	v->data[v->len++] = elem;
 }
 
-/* DEPRECATED! 
- * Pre-conditions: v != NULL
- * Post-conditions: If elem is in v returns the index of the first occurence of elem
- * else returns -1.
- */
-int vec_indexof(Vector * v, void * elem)
+/* Pre-conditions: v1 != NULL, v2 != NULL
+Post-conditions: the elements of v2 is appended to the end of v1 and 
+v2 is left unchanged. */
+void vec_appendv(Vector *v1, Vector *v2)
 {
-	for (int i = 0; i < v->len; i++)
-		if (v->data[i] == elem)
-			return i;
-	return -1;
+	for (int i = 0; i < v2->len; i++) {
+		vec_put(v1, v2->data[i]);
+	}
+}
+
+/* Post-conditions: If v is NULL or index is out of bounds returns NULL
+else returns v[index].*/
+void * vec_get(Vector * v, int index)
+{	
+	if (v == NULL || index < 0 || index >= v->len)
+		return NULL;
+	return v->data[index];
 }
 
 Map * new_map()
@@ -160,22 +166,20 @@ SrcFile * new_srcfile(char * path)
 	char buf[4096];
 	StringBuilder *sb = new_sb();
 	int n;
-	src->path = path;
-	src->fp = fopen(path, "r");
-	if (src->fp == NULL) {
+	FILE *fp = fopen(path, "r");
+	if (fp == NULL) {
 		fprintf(stderr, "Cannot open file: %s.", path);
 		exit(-1);
 	}
 	do {
-		n = fread(buf, sizeof(char), sizeof(buf), src->fp);
+		n = fread(buf, sizeof(char), sizeof(buf), fp);
 		sb_append(sb, buf, n);
 	} while (n != 0);
 	sb_append(sb, "\n", 1);	// make sure a source file ends with a newline.
 	src->buf = sb_get(sb);
-	free_sb(sb);
+	src->path = path;
 	src->p = src->buf;
-	src->line = 1;
-	src->col = 1;
+	free_sb(sb);
 	return src;
 }
 
@@ -184,26 +188,68 @@ Post-conditions: Return the next character with internal state of src unchanged.
 If pointer p reaches end of the file returns '\0'. */
 char peekc(SrcFile * src)
 {
-	if (*src->p == '\0')
-		return '\0';
 	return *(src->p);
 }
 
 /* Pre-conditions: src is not NULL.
 Post-conditions: If pointer p reaches end of the file returns '\0' else
-returns the next character, increments the internal pointer by 1,
-and modifies src->line and src->col to keep consistency with src->p.*/
+returns the next character, increments the internal pointer by 1*/
 char nextc(SrcFile * src)
 {
 	if (*src->p == '\0')
 		return '\0';
-	char c = *src->p++;
-	src->col++;
-	if (c == '\n') {
-		src->line++;
-		src->col = 1;
-	}
-	return c;
+	return *src->p++;
 }
 
+/*Pre-conditions: num_types is the number of variable arguments.*/
+TypeSet *new_typeset(int num_types, ...)
+{
+	TypeSet * t = calloc(1, sizeof(TypeSet));
+	t->types = malloc(sizeof(int) * num_types);
+	t->len = num_types;
+	va_list va;
+	va_start(va, num_types);
+	for (int i = 0; i < num_types; i++) {
+		t->types[i] = va_arg(va, int);
+	}
+	va_end(va);
+	return t;
+}
 
+bool typeset_isin(TypeSet * t, int type)
+{
+	for (int i = 0; i < t->len; i++) {
+		if (type == t->types[i])
+			return true;
+	}
+	return false;
+}
+
+/* Pre-conditions: t1 != NULL, t2 != NULL. 
+Post-condtions: Returns a TypeSet t containing elements in both t1 and t2.
+There might be duplicates in t.*/
+TypeSet * typeset_union(TypeSet * t1, TypeSet * t2)
+{
+	TypeSet *t = calloc(1, sizeof(TypeSet));
+	t->types = malloc(t1->len + t2->len);
+	t->len = t1->len + t2->len;
+	memcpy(t->types, t1->types, sizeof(int) * t1->len);
+	memcpy(t->types + sizeof(int) * t1->len, t2->types, sizeof(int) * t2->len);
+	return t;
+}
+
+/*Pre-conditions: param cnt is number of variable argument.
+a is the number to be compared.
+Post-conditions: Returns true if a equals one of the variable argument
+and false otherwise. */
+bool eq_oneof(int num_vargs, int a, ...)
+{
+	va_list va;
+	va_start(va, a);
+	for (int i = 0; i < num_vargs; i++) {
+		if (a == va_arg(va, int))
+			return true;
+	}
+	va_end(va);
+	return false;
+}

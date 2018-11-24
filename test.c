@@ -1,14 +1,13 @@
-const int SIZE = +0020';
+const int SIZE = +0020;
 const char SORT = 'Q';
-const char plus = '+, times = '*', lucky = '9';
-@
+const char plus = '+', times = '*', lucky = '9';
 
 int a[20];
 int n, num_cmp;
 
 
 int fact(int n)
-{
+{	
 	if (n == 0)
 		return (1);
 	else
@@ -17,8 +16,9 @@ int fact(int n)
 
 char Atbash(char c)
 {
+	const char a = 'a';
 	
-	if (c >= 'a') {
+	if (c >= a) {
 		if (c <= 'z') {
 			return ('a' + 'z' - c);
 		}
@@ -38,8 +38,9 @@ void get_value_n
 {
 	int USELESS001;
 
-	for (useless001 = 0; n < 0; useless001 = useless001 + n) {
-		printf("Input a non-negative integer: ")
+	for (useless001 = 0; n < 0; uselesS001 = usEless001 + 010) {
+		printf("useless001=", useless001);
+		printf("Input a non-negative integer: ");
 		scanf(n);
 	}
 }
@@ -50,6 +51,32 @@ void swap_array_elements(int i, int j)
 	_tmp = a[i];
 	a[i] = a[j];
 	a[j] = _tmp;
+}
+
+void nop
+{
+
+}
+
+void array_comparison
+{
+	const int max = 98;
+	int s1[98], s2[98];
+	int i;
+	for (i = 0; i < max; i = i + 1) {
+		s1[i] = i + -5 * i - 12345;
+		s2[i] = i + ((-5) * i)-12345;
+	}
+	s1[max-1] = +0;
+	s2[max-1] = -0;
+	s1[max - 2]=s2[max - 2]*s2[max-2];
+	i = 0;
+	while (s1[i]) {
+		if (s1[i] != s2[i])
+			printf("s1 is different from s2.");
+		i = i++1;
+	}
+	return;
 }
 
 void quick(int left, int right)
@@ -80,14 +107,16 @@ void quick(int left, int right)
 void main()
 {
 	int i;
+	int t;
 	char order, c;
-	printf("This is a simple sorting program using quick sort algorithm!")
-	printf("Input the size of the array and order you prefer('a' for ascending order, 'd' for descending order): ")
+	printf("This is a simple sorting program using quick sort algorithm!");
+	printf("Input the size of the array and order you prefer('a' for ascending order, 'd' for descending order): ");
 	scanf(n, order);
-	printf("Input the array: ")
+	printf("Input the array: ");
 	i = 0;
 	while (i < n) {
-		scanf(a[i]);
+		scanf(t);
+		a[i] = t;
 		i = i + 1;
 	}
 	
@@ -95,7 +124,10 @@ void main()
 	
 	;
 	
-	printf("The sorted array:")
+	nop;
+	//j = j+1;
+	printf("-num_cmp/2 = ", -num_cmp/2);
+	printf("The sorted array:");
 	if (order == 'a') {
 		i = 0;
 		while (i < n) {
@@ -106,16 +138,17 @@ void main()
 		i = n - 1;
 		while (i > -1) {
 			printf(" ", a[i]);
-			i = i - 1;
+			i = i + -1;
 		}
 	}
 	
-	printf("Bonus!")
+	printf("Bonus!");
 	get_value_n;
 	printf(fact(n));
-	printf("Input a letter: ")
-	scanf(c)
+	printf("");
+	printf("Input a letter: ");
+	scanf(c);
 	c = atbash(c);
 	printf(c);
 }
-/*
+
