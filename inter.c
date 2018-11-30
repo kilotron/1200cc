@@ -4,6 +4,7 @@
 static int label = 1;
 static int n_regs = 1;	// register number
 static Vector *ir;
+static Env *top;		// for temporary variable memory allocation
 
 static void gen_const_or_var_decl(Node *node);
 static void gen_func_decl(Node *node);
@@ -12,8 +13,9 @@ static Reg * gen_func_call(Node *node);
 static void gen_main_func(Node *node);
 static Reg * gen_expr(Node *node);
 static void gen_stmt(Node *node);
+static void merge_labels();
 
-Vector * gen_ir(Program *prog)
+Vector * gen_ir(Program_AST *prog)
 {
 	ir = new_vec();
 	gen_const_or_var_decl(prog->const_decl);
@@ -22,6 +24,7 @@ Vector * gen_ir(Program *prog)
 		gen_func_decl(vec_get(prog->funcs, i));
 	}
 	gen_main_func(prog->main_func);
+	merge_labels();
 	return ir;
 }
 
@@ -32,15 +35,26 @@ static int new_label() {
 static Reg *new_reg(int type)
 {
 	Reg *r = calloc(1, sizeof(Reg));
+	Symbol *symbol;
 	r->type = type;
-	if (type == REG_TEMP)
+	/* allocate reg num only for temporary variables.  */
+	if (type == REG_TEMP) {
 		r->vn = n_regs++;
+		symbol = calloc(1, sizeof(Symbol));
+		symbol->flag = SYMBOL_LOCAL | SYMBOL_TEMP;
+		symbol->type = new_type(TYPE_INT);
+		symbol->offset = top->offset;
+		r->symbol = symbol;
+		top->offset += ALIGN_WORD;
+		map_put(top->symbols, stringf("#t%d", r->vn), symbol);
+	}
 	return r;
 }
 
 static IR * new_ir(int op) {
 	IR *i = calloc(1, sizeof(IR));
 	i->op = op;
+	i->is_leader = false;
 	return i;
 }
 
@@ -136,7 +150,7 @@ static Reg * gen_func_call(Node *node)
 	
 	t = new_ir(IR_FUNC_CALL);
 	t->name = node->symbol->name;
-	t->result = result;
+	t->result = result;	// return value
 	
 	if (node->args) {
 		t->num_args = node->args->len;
@@ -294,6 +308,7 @@ static void gen_write_stmt(Node *node)
 	strcpy(t->name, name);
 	if (node->left)
 		t->arg1 = gen_expr(node->left);
+	t->string_label = node->string_label;
 	t->string = node->string;
 	emit_ir(t);
 }
@@ -367,6 +382,18 @@ static void gen_const_or_var_decl(Node *node)
 	}
 }
 
+bool last_ir_is_return()
+{
+	IR *t;
+	for (int i = ir->len - 1; i >= 0; i--) {
+		t = vec_get(ir, i);
+		if (t->op == IR_LABEL)
+			continue;
+		return t->op == IR_RETURN;
+	}
+	return false;
+}
+
 static void gen_func_decl(Node *node)
 {
 	if (node == NULL)
@@ -374,6 +401,8 @@ static void gen_func_decl(Node *node)
 	Reg *result = new_reg(REG_VAR);	// holds function symbol
 	Reg *arg;
 	IR *fd = new_ir(IR_FUNC_DECL);
+	top = node->env;
+	fd->env = top;
 	fd->result = result;
 	result->symbol = node->symbol;
 	Vector *params_list = node->symbol->type->params_list;
@@ -390,15 +419,40 @@ static void gen_func_decl(Node *node)
 	fd->name = node->symbol->name;
 	emit_ir(fd);
 	gen_compound_stmt(node->stmt1);
+	// Makes function always end with a return to make later analysis easy.
+	if (!last_ir_is_return())
+		emit_ir(new_ir(IR_RETURN));
+	top = NULL;	// symbol table is valid in one function here, make it explicit
 }
 
 static void gen_main_func(Node *node)
 {
 	IR *t = new_ir(IR_FUNC_DECL);
 	Reg *reg = new_reg(REG_VAR);
+	top = node->env;
+	t->env = top;
 	reg->symbol = new_symbol("main", new_type(TYPE_FUNC));
 	t->result = reg;
 	t->name = reg->symbol->name;
 	emit_ir(t);
 	gen_compound_stmt(node->stmt1);
+	top = NULL;
+}
+
+static void merge_labels()
+{
+	IR *l1, *l2, *t;
+	for (int i = 0; i < ir->len - 1; i++) {
+		l1 = vec_get(ir, i);
+		l2 = vec_get(ir, i + 1);
+		if (l1->op == IR_LABEL && l2->op == IR_LABEL) {
+			vec_remove(ir, i + 1);
+			for (int j = 0; j < ir->len; j++) {
+				t = vec_get(ir, j);
+				if (t->to_label == l2->b_label)
+					t->to_label = l1->b_label;
+			}
+			i--;
+		}
+	}
 }

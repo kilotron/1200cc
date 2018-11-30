@@ -120,7 +120,7 @@ void main()
 		i = i + 1;
 	}
 	
-	quick(1, n - 1);
+	quick(0, n - 1);
 	
 	;
 	

@@ -102,11 +102,12 @@ Node *new_assignment_node(Node *lhs, Node *rhs)
 	return node;
 }
 
-Node *new_func_decl_node(Symbol *func_id, Node *body)
+Node *new_func_decl_node(Symbol *func_id, Node *body, Env *env)
 {
 	Node *node = new_node(ND_FUNC_DECL);
 	node->id_type = func_id->type;
 	node->symbol = func_id;
 	node->stmt1 = body;
+	node->env = env;
 	return node;
 }

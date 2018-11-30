@@ -35,6 +35,8 @@ typedef struct {
 	Vector *values;
 } Map;
 
+void vec_remove(Vector * v, int index);
+
 Map *new_map();
 void map_put(Map *map, char *key, void *value);
 void *map_get(Map *map, char *key);
@@ -78,5 +80,7 @@ bool typeset_isin(TypeSet *t, int type);
 TypeSet *typeset_union(TypeSet *t1, TypeSet *t2);
 
 bool eq_oneof(int num_vargs, int a, ...);
+
+char * stringf(char * fmt, ...);
 
 

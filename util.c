@@ -88,6 +88,14 @@ void * vec_get(Vector * v, int index)
 	return v->data[index];
 }
 
+/* 0 <= index < v->len */
+void vec_remove(Vector *v, int index)
+{
+	for (int i = index; i < v->len - 1; i++)
+		v->data[i] = v->data[i + 1];
+	v->len--;
+}
+
 Map * new_map()
 {
 	Map *map = malloc(sizeof(Map));
@@ -252,4 +260,17 @@ bool eq_oneof(int num_vargs, int a, ...)
 	}
 	va_end(va);
 	return false;
+}
+
+/* The length of string is less than 2048.*/
+char *stringf(char *fmt, ...)
+{
+	va_list va;
+	va_start(va, fmt);
+	char buf[2048];
+	vsnprintf(buf, 2048, fmt, va);
+	va_end(va);
+	char *s = malloc(strlen(buf) + 1);
+	strcpy(s, buf);
+	return s;
 }

@@ -1,10 +1,11 @@
 #include "1200cc.h"
 
-Env *top;	// Symbol table at the top of stack, in other words, current symbol table.
+Env *top;			// Symbol table at the top of stack, in other words, current symbol table.
+String_Table string_table;
 Vector *tokens;		// all tokens in source program.
-Token *look;// lookahead token.
+Token *look;		// lookahead token.
 Token *look_prev;	// for demo
-int pos;	// index of next token. pos can be modified in move() and move_step().
+int pos;			// index of next token. pos can be modified in move() and move_step().
 
 Env *new_env(Env *prev);
 static Symbol * lookup_symbol(char *name);
@@ -17,12 +18,12 @@ static Token *lookahead(int i);
 static void test(TypeSet *expected, TypeSet *tol);
 static void skip_to(TypeSet *to);
 static void skip_to_next_stmt();
-static Program * program();
-static Node * const_decl();
-static Vector * const_def();
+static Program_AST * program();
+static Node * const_decl(bool is_local);
+static Vector * const_def(bool is_local);
 static Node * signed_integer();
-static Node * var_decl();
-static Vector *var_def();
+static Node * var_decl(bool is_local);
+static Vector *var_def(bool is_local);
 static Type *type_specifier();
 static Node *func_with_ret_value_decl();
 static Symbol * func_with_ret_value_decl_head();
@@ -51,9 +52,10 @@ static Node * factor();
 static Type *type_of_expr(Node *e);
 
 /*Pre-conditions: tokens is not null.*/
-Program * parse(Vector *_tokens)
+Program_AST * parse(Vector *_tokens)
 {
 	top = new_env(NULL);
+	string_table.strings = new_vec();
 	tokens = _tokens;
 	pos = 0;
 	move();	// look is not NULL since tokens has at least a token of TK_EOF.
@@ -88,8 +90,16 @@ static bool enter_symbol(Token *token, Symbol *symbol)
 		errorf(token, "redeclaration of '%s'", symbol->name);
 		return false;
 	}
+	if (symbol->flag & SYMBOL_PARAM)
+		top->num_args++;
 	map_put(top->symbols, token->lexeme, symbol);
 	return true;
+}
+
+static int enter_string(char *s)
+{
+	vec_put(string_table.strings, s);
+	return string_table.strings->len;
 }
 
 /* If the identifier has already been declared, returns the symbol table
@@ -246,9 +256,9 @@ static void skip_to_end_of_block_or_stmt()
 	}
 }
 
-static Program * program()
+static Program_AST * program()
 {
-	Program *prog = new_program();
+	Program_AST *prog = new_program();
 	Vector *funcs = new_vec();
 	Token *start = look;
 	bool error = false;
@@ -257,7 +267,7 @@ static Program * program()
 
 	// [<常量说明>]
 	if (look->type == TK_CONST)
-		prog->const_decl = const_decl();
+		prog->const_decl = const_decl(false);
 
 	// [<变量说明>]
 after_const_decl_in_program:
@@ -266,7 +276,7 @@ after_const_decl_in_program:
 		// cases: <变量说明>，<有返回值的函数定义>
 		// lookahead(1) is expected to be TK_ID in both cases.
 		if (eq_oneof(3, lookahead(2)->type, TK_COMMA, TK_SC, TK_LBRKT)) {
-			prog->var_decl = var_decl();
+			prog->var_decl = var_decl(false);
 			if (prog->var_decl == NULL)
 				error = true;
 		}
@@ -330,7 +340,7 @@ after_const_decl_in_program:
 }
 
 /*<常量说明> -> const <常量定义> ; {const <常量定义> ;}*/
-static Node * const_decl()
+static Node * const_decl(bool is_local)
 {
 	Token *start = look;
 	Vector *defs = new_vec(), *sub_defs;
@@ -340,7 +350,7 @@ static Node * const_decl()
 	node->defs = defs;
 	while (look->type == TK_CONST) {
 		move();
-		sub_defs = const_def();
+		sub_defs = const_def(is_local);
 
 		if (sub_defs == NULL) {	// error occurs in const_def
 			error = true;
@@ -377,7 +387,7 @@ static Node * const_decl()
 }
 
 /*<常量定义> -> int <标识符> = <整数> {, <标识符> = <整数>}*/
-static Vector * const_def()
+static Vector * const_def(bool is_local)
 {
 	Token *token, *start = look;
 	Symbol *symbol;
@@ -403,6 +413,8 @@ static Vector * const_def()
 		}
 
 		symbol = new_symbol(token->lexeme, type);
+		if (is_local)
+			symbol->flag = SYMBOL_LOCAL;
 
 		if (!match('=')) {
 			goto error_const_def;
@@ -420,7 +432,7 @@ static Vector * const_def()
 				goto error_const_def;
 			}
 		}
-
+		symbol->value = value;
 		node = new_const_def_node(type, symbol, value);
 		if (enter_symbol(token, symbol))	// returns true ~ success
 			vec_put(defs, node);
@@ -464,7 +476,7 @@ static Node * signed_integer()
 	return node;
 }
 
-static Node * var_decl()
+static Node * var_decl(bool is_local)
 {
 	Token *start = look;
 	Vector *defs = new_vec(), *sub_defs;
@@ -474,7 +486,7 @@ static Node * var_decl()
 	node->defs = defs;
 	while ((look->type == TK_INT || look->type == TK_CHAR) 
 		&& eq_oneof(3, lookahead(2)->type, ',', ';', '[')) {
-		sub_defs = var_def();
+		sub_defs = var_def(is_local);
 		if (sub_defs == NULL) {	// error occurs in var_def
 			error = true;
 			skip_to_end_of_block_or_stmt();
@@ -511,7 +523,7 @@ static Node * var_decl()
 /* <变量定义> -> <类型标识符> (<标识符> | <标识符>[无符号整数]) 
 				{, (<标识符> | <标识符>[无符号整数])} 
 Pre-condtions: look->type is either TK_INT or TK_CHAR.*/
-static Vector *var_def()
+static Vector *var_def(bool is_local)
 {
 	Type *type;
 	Token *token, *start = look;
@@ -554,7 +566,8 @@ static Vector *var_def()
 		else {
 			symbol = new_symbol(token->lexeme, type);
 		}
-
+		if (is_local)
+			symbol->flag = SYMBOL_LOCAL;
 		if (enter_symbol(token, symbol)) {
 			node = new_node(ND_VAR_DEF);
 			node->id_type = symbol->type;
@@ -596,7 +609,7 @@ static Type *type_specifier()
 /* Pre-conditions: look is 'int' or 'char'.*/
 static Node *func_with_ret_value_decl()
 {
-	Env *saved_env;
+	Env *saved_env, *this_env;
 	Symbol *func_id;
 	Node *body;
 	Token *start= look;
@@ -607,6 +620,7 @@ static Node *func_with_ret_value_decl()
 
 	saved_env = top;
 	top = new_env(top);
+	this_env = top;
 	if (look->type == '(') {
 		move();
 		func_id->type->params_list = param_list();
@@ -631,7 +645,7 @@ static Node *func_with_ret_value_decl()
 		goto error_in_func_with_ret_value_decl;
 	top = saved_env;
 	parser_demo(start, look_prev, "<有返回值函数定义>");
-	return new_func_decl_node(func_id, body);
+	return new_func_decl_node(func_id, body, this_env);
 
 error_in_func_with_ret_value_decl:
 	top = saved_env;
@@ -686,6 +700,7 @@ static Vector * param_list()
 		if (!match(TK_ID))
 			goto error_in_param_list;
 		symbol = new_symbol(token->lexeme, type);
+		symbol->flag |= SYMBOL_PARAM | SYMBOL_LOCAL;
 		enter_symbol(token, symbol);
 		node = new_id_node(token, symbol);
 		vec_put(params, node);
@@ -709,7 +724,7 @@ static Node *func_without_ret_value_decl()
 	type->ret = NULL;
 	Token *token, *start = look;
 	Symbol *symbol;
-	Env *saved_env;
+	Env *saved_env, *this_env;
 	Node *body;
 
 	match(TK_VOID);
@@ -721,6 +736,7 @@ static Node *func_without_ret_value_decl()
 	enter_symbol(token, symbol);
 	saved_env = top;
 	top = new_env(top);
+	this_env = top;
 	if (look->type == '(') {
 		move();
 		symbol->type->params_list = param_list();
@@ -744,7 +760,7 @@ static Node *func_without_ret_value_decl()
 		goto error_in_func_without_ret_value_decl;
 	top = saved_env;
 	parser_demo(start, look_prev, "<无返回值函数定义>");
-	return new_func_decl_node(symbol, body);
+	return new_func_decl_node(symbol, body, this_env);
 
 	
 error_in_func_without_ret_value_decl:
@@ -773,6 +789,7 @@ static Node * main_func()
 	}
 	saved_env = top;
 	top = new_env(top);
+	node->env = top;
 	node->stmt1 = compound_stmt();
 	if (node->stmt1 == NULL) {
 		error = true;
@@ -802,13 +819,13 @@ static Node * compound_stmt()
 	bool error = false;
 
 	if (look->type == TK_CONST) {
-		node->const_decl = const_decl();
+		node->const_decl = const_decl(true);
 		if (node->const_decl == NULL)
 			error = true;
 	}
 
 	if (eq_oneof(2, look->type, TK_INT, TK_CHAR)) {
-		node->var_decl = var_decl();
+		node->var_decl = var_decl(true);
 		if (node->var_decl == NULL)
 			error = true;
 	}
@@ -1332,6 +1349,7 @@ static Node * write_stmt()
 		goto error_in_write_stmt;
 	if (look->type == TK_STRL) {
 		node->string = look->lexeme;
+		node->string_label = enter_string(node->string);
 		move();
 		if (look->type == ',') {
 			move();
@@ -1534,10 +1552,17 @@ Symbol *new_symbol(char *name, Type *type)
 	Symbol *s = calloc(1, sizeof(Symbol));
 	s->name = name;
 	s->type = type;
+	/* func_decl is after global const or var decl, offset is of no use for function id
+	   Allocate 4 bytes for both char and int.*/
+	s->offset = top->offset;
+	if (type->type == TYPE_ARRAY)
+		top->offset += ALIGN_WORD * type->len;
+	else
+		top->offset += ALIGN_WORD;
 	return s;
 }
   
-Program *new_program()
+Program_AST *new_program()
 {
-	return calloc(1, sizeof(Program));
+	return calloc(1, sizeof(Program_AST));
 }

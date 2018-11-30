@@ -62,7 +62,7 @@ Vector * tokenize(char * path);
 void lexer_demo(char *path);
 void parser_demo(Token *s, Token *e, char *fmt, ...);
 
-
+#define ALIGN_WORD 4
 // Type is used to describe the type of a Symbol, extra info of a Type.
 typedef struct Type Type;
 typedef struct Type{
@@ -97,11 +97,36 @@ enum {
 
 Type *new_type(int type);
 
+// address descriptor
+typedef struct {
+	//int mem_addr;
+	int reg_num;
+	bool in_reg;
+	bool in_mem;
+} Addr_Des;
+
+// register descriptor
+typedef struct {
+	Map *temp_reg;
+	Map *saved_reg;
+	//Symbol *t_reg[32];
+} Reg_Des;
+
+#define SYMBOL_LOCAL 0x1
+#define SYMBOL_TEMP 0x2
+#define SYMBOL_PARAM 0x4
+
 // An identifier can be a Symbol.
 typedef struct {
 	char *name;
 	Type *type;
-	int offset;		// reserved.
+	int offset;		// relative address
+	//bool is_local;	// is local variable
+	//bool is_temp;
+	//bool is_param;
+	int flag;
+	Addr_Des addr_des;
+	int value;		// for const
 } Symbol;
 
 Symbol *new_symbol(char *name, Type *type);
@@ -110,7 +135,13 @@ Symbol *new_symbol(char *name, Type *type);
 typedef struct Env{
 	Map *symbols;	// symbols maps string(name of a symbol) -> Symbol
 	struct Env *prev;		// An Env has a pointer to its parent, but not vice-versa.
+	int offset;
+	int num_args;
 } Env;
+
+typedef struct {
+	Vector *strings;
+} String_Table;
 
 typedef struct Node Node;
 typedef struct Node {
@@ -130,6 +161,7 @@ typedef struct Node {
 
 	int value;			// signed integer or char for constant
 	char *string;		// for printf stmt
+	int string_label;
 
 	/* 'if' (cond) stmt1 ['else' stmt2]: 
 	 * If nd_type == ND_IF, stmt2 is optional and thus can be NULL.
@@ -151,6 +183,7 @@ typedef struct Node {
 	Symbol *symbol;		// for identifier
 	Vector *args;		// for function call, vector of Node*
 	Vector *defs;		// constant define.
+	Env *env;			// function declaration
 	Token *token;
 } Node;
 
@@ -198,7 +231,7 @@ Node * new_for_node(Node * init, Node * cond, Node * inc, Node * body);
 Node * new_for_init_node(Symbol * id, Node * expr);
 Node * new_for_inc_node(Node * left, Node * expr);
 Node * new_assignment_node(Node * lhs, Node * rhs);
-Node * new_func_decl_node(Symbol * func_id, Node * body);
+Node * new_func_decl_node(Symbol * func_id, Node * body, Env *env);
 
 enum {
 	REG_TEMP = 0,
@@ -209,6 +242,7 @@ enum {
 typedef struct {
 	int type;
 	int vn;			// virtual reggister number, zero for variables
+	int rn;
 	Symbol *symbol;	// for variables
 	int value;		// for number
 } Reg;
@@ -256,9 +290,13 @@ typedef struct {
 	char *name;
 	int num_args;
 	Vector *args;	// args of Reg *
+	Env *env;		// function declaration
 
 	// special case: for printf stmt
 	char *string;
+	int string_label;
+
+	bool is_leader;	// for partitioning bb
 } IR;
 
 typedef struct {
@@ -266,13 +304,45 @@ typedef struct {
 	Node *var_decl;
 	Vector *funcs;		// vector of Node(ND_FUNC_DECL)
 	Node *main_func;
+} Program_AST;
+
+#define REG_A0 4
+#define REG_T0 8
+#define REG_T1 9
+#define REG_T2 10
+#define REG_T3 11
+#define REG_T4 12
+#define REG_T5 13
+#define REG_T6 14
+#define REG_T7 15
+#define REG_S0 16
+#define REG_S7 23
+#define REG_T8 24
+#define REG_T9 25
+#define REG_FP 30
+
+// basic block
+typedef struct {
+	int label;
+	Vector *ir;
+	Vector *pred;	// predcessor
+	Vector *succ;	// successor
+	Vector *in_regs;
+	Vector *out_regs;
+} BB;
+
+typedef struct {
+	BB *global_vars;
+	Vector *funcs;	// vec of vec(func) of bb
 } Program;
 
-Program *new_program();
-Program * parse(Vector *_tokens);
-Vector * gen_ir(Program *prog);
+Program_AST *new_program();
+Program_AST * parse(Vector *_tokens);
+Vector * gen_ir(Program_AST *prog);
 void ir_demo(Vector *ir);
-
+void basic_block_demo(Program *prog);
+Program * partition_program(Vector *ir);
+void gen_mips(Vector *ir);
 // error.c
 void errorf(Token *t, char *fmt, ...);
 char *type2string(int type);
