@@ -45,7 +45,7 @@ static Reg *new_reg(int type)
 		symbol->type = new_type(TYPE_INT);
 		symbol->offset = top->offset;
 		r->symbol = symbol;
-		top->offset += ALIGN_WORD;
+		top->offset += WORD_SIZE;
 		map_put(top->symbols, stringf("#t%d", r->vn), symbol);
 	}
 	return r;
@@ -437,6 +437,9 @@ static void gen_main_func(Node *node)
 	emit_ir(t);
 	gen_compound_stmt(node->stmt1);
 	top = NULL;
+	// Makes function always end with a return to make later analysis easy.
+	if (!last_ir_is_return())
+		emit_ir(new_ir(IR_RETURN));
 }
 
 static void merge_labels()

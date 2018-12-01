@@ -62,7 +62,7 @@ Vector * tokenize(char * path);
 void lexer_demo(char *path);
 void parser_demo(Token *s, Token *e, char *fmt, ...);
 
-#define ALIGN_WORD 4
+#define WORD_SIZE 4
 // Type is used to describe the type of a Symbol, extra info of a Type.
 typedef struct Type Type;
 typedef struct Type{
@@ -342,7 +342,7 @@ Vector * gen_ir(Program_AST *prog);
 void ir_demo(Vector *ir);
 void basic_block_demo(Program *prog);
 Program * partition_program(Vector *ir);
-void gen_mips(Vector *ir);
+void gen_mips(char *path, Vector *ir);
 // error.c
 void errorf(Token *t, char *fmt, ...);
 char *type2string(int type);

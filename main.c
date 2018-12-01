@@ -9,9 +9,9 @@ int main()
 	Vector *ir = NULL;
 	if (prog) {
 		ir = gen_ir(prog);
-		//ir_demo(ir);
+	//	ir_demo(ir);
+		gen_mips("test_mips.asm", ir);
 	}
-	gen_mips(ir);
 		
 	return 0;
 }

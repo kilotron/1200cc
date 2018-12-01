@@ -709,6 +709,7 @@ static Vector * param_list()
 		}
 		move();
 	}
+	top->offset = 0;	// start of local variables.
 	parser_demo(start, look_prev, "<值参数表>");
 	return params;
 
@@ -1556,9 +1557,9 @@ Symbol *new_symbol(char *name, Type *type)
 	   Allocate 4 bytes for both char and int.*/
 	s->offset = top->offset;
 	if (type->type == TYPE_ARRAY)
-		top->offset += ALIGN_WORD * type->len;
+		top->offset += WORD_SIZE * type->len;
 	else
-		top->offset += ALIGN_WORD;
+		top->offset += WORD_SIZE;
 	return s;
 }
   
