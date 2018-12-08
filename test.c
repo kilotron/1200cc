@@ -2,7 +2,7 @@ const int SIZE = +0020;
 const char SORT = 'Q';
 const char plus = '+', times = '*', lucky = '9';
 
-int a[20];
+int a[20]; 
 int n, num_cmp;
 
 
