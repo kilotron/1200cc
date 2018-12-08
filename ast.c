@@ -4,13 +4,13 @@ Node * new_node(int nd_type)
 {
 	Node *node = calloc(1, sizeof(Node));
 	node->nd_type = nd_type;
+	node->with_paren = false;
 	return node;
 }
 
 Node * new_const_def_node(Type *type, Symbol *symbol, int value)
 {
 	Node *node = new_node(ND_CONST_DEF);
-	node->id_type = type;
 	node->symbol = symbol;
 	node->value = value;
 	return node;
@@ -21,7 +21,6 @@ Node *new_id_node(Token *token, Symbol *symbol)
 {
 	Node * node = new_node(ND_ID);
 	node->token = token;
-	node->id_type = symbol->type;
 	node->symbol = symbol;
 	return node;
 }
@@ -105,7 +104,6 @@ Node *new_assignment_node(Node *lhs, Node *rhs)
 Node *new_func_decl_node(Symbol *func_id, Node *body, Env *env)
 {
 	Node *node = new_node(ND_FUNC_DECL);
-	node->id_type = func_id->type;
 	node->symbol = func_id;
 	node->stmt1 = body;
 	node->env = env;

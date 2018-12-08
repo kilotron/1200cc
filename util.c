@@ -96,6 +96,24 @@ void vec_remove(Vector *v, int index)
 	v->len--;
 }
 
+Vector_Iterator * vec_itr(Vector * v)
+{
+	Vector_Iterator * itr = calloc(1, sizeof(Vector_Iterator));
+	itr->v = v;
+	itr->p = 0;
+	return itr;
+}
+
+bool vec_has_next(Vector_Iterator *itr)
+{
+	return (itr->p < itr->v->len);
+}
+
+void *vec_next(Vector_Iterator *itr)
+{
+	return vec_get(itr->v, itr->p++);
+}
+
 Map * new_map()
 {
 	Map *map = malloc(sizeof(Map));

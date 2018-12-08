@@ -83,6 +83,8 @@ static void partition_function(Vector *func_of_bb, Vector *ir, int start, int en
 /* ir is Vector of IR* */
 Program * partition_program(Vector *ir)
 {
+	if (ir == NULL)
+		return NULL;
 	Program *prog;
 	IR *t;
 	BB *bb;

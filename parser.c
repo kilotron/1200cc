@@ -1,11 +1,19 @@
 #include "1200cc.h"
+#define MATCH_OR_ERROR(token_type, label) if (!match(token_type)) goto label
+#define MATCH_OR_RETURN_NULL(token_type) if (!match(token_type)) return NULL
+#define NOT_NULL_OR_ERROR(var, label) if (var == NULL) goto label
+#define SET_ERROR_IF_NULL(var) if (var == NULL) error = true
+#define SEMANTIC_ERROR(semantic_error) semantic_error = true; error_in_program = true
 
+extern bool error_in_program;
 Env *top;			// Symbol table at the top of stack, in other words, current symbol table.
 String_Table string_table;
 Vector *tokens;		// all tokens in source program.
 Token *look;		// lookahead token.
 Token *look_prev;	// for demo
 int pos;			// index of next token. pos can be modified in move() and move_step().
+Symbol *current_func;// function declaration type-checking, modified in enter_symbol only
+bool current_func_has_return; // modified in enter_symbol or return_stmt
 
 Env *new_env(Env *prev);
 static Symbol * lookup_symbol(char *name);
@@ -92,6 +100,10 @@ static bool enter_symbol(Token *token, Symbol *symbol)
 	}
 	if (symbol->flag & SYMBOL_PARAM)
 		top->num_args++;
+	if (symbol->type->type == TYPE_FUNC) {
+		current_func = symbol;
+		current_func_has_return = false;
+	}
 	map_put(top->symbols, token->lexeme, symbol);
 	return true;
 }
@@ -108,14 +120,19 @@ and enter it into the symbol table.*/
 static Symbol * assert_decld_id(Token *token)
 {
 	Symbol *symbol = lookup_symbol(token->lexeme);
-	int id_type = TYPE_INT;
 	if (symbol == NULL) {
+		Type *type = new_type(TYPE_INT);
 		// the type of the undeclared identifier is set to int
 		// this identifier is entered to symbol table.
 		errorf(token, "undeclared identifer");
-		if (lookahead(1)->type == '(')
-			id_type = TYPE_FUNC;
-		Type *type = new_type(id_type);
+		SEMANTIC_ERROR(error_in_program);
+		if (look->type == '(' || look->type == TK_SC) {
+			type = new_type(TYPE_FUNC);
+		}
+		else if (look->type == '[') {
+			type = new_type(TYPE_ARRAY);
+			type->array_of = new_type(TYPE_INT);
+		}
 		symbol = new_symbol(token->lexeme, type);
 		enter_symbol(token, symbol);
 	}
@@ -277,8 +294,7 @@ after_const_decl_in_program:
 		// lookahead(1) is expected to be TK_ID in both cases.
 		if (eq_oneof(3, lookahead(2)->type, TK_COMMA, TK_SC, TK_LBRKT)) {
 			prog->var_decl = var_decl(false);
-			if (prog->var_decl == NULL)
-				error = true;
+			SET_ERROR_IF_NULL(prog->var_decl);
 		}
 		else if (eq_oneof(2, lookahead(2)->type, TK_LP, TK_LBRACE)) {
 			Node *n = func_with_ret_value_decl();
@@ -316,8 +332,7 @@ after_const_decl_in_program:
 		// <主函数>
 		if (look->type == TK_VOID && lookahead(1)->type == TK_MAIN) {
 			prog->main_func = main_func();
-			if (prog->main_func == NULL)
-				error = true;
+			SET_ERROR_IF_NULL(prog->main_func);
 			if (look->type != TK_EOF) {
 				errorf(look, "tokens after Function 'main' is ignored");
 			}
@@ -407,30 +422,19 @@ static Vector * const_def(bool is_local)
 	do {
 		move(); // after a move, look is expected to be of type TK_ID
 		token = look;
-
-		if (!match(TK_ID)) {
-			goto error_const_def;
-		}
-
+		MATCH_OR_ERROR(TK_ID, error_const_def);
 		symbol = new_symbol(token->lexeme, type);
 		if (is_local)
 			symbol->flag = SYMBOL_LOCAL;
-
-		if (!match('=')) {
-			goto error_const_def;
-		}
-
+		MATCH_OR_ERROR('=', error_const_def);
 		if (type->type == TYPE_CONST_INT) {
 			Node *si = signed_integer();
-			if (si == NULL)
-				goto error_const_def;
+			NOT_NULL_OR_ERROR(si, error_const_def);
 			value = si->value;
 		}
 		else {	// char constant
 			value = look->value;
-			if (!match(TK_CHARL)) {
-				goto error_const_def;
-			}
+			MATCH_OR_ERROR(TK_CHARL, error_const_def);
 		}
 		symbol->value = value;
 		node = new_const_def_node(type, symbol, value);
@@ -537,18 +541,15 @@ static Vector *var_def(bool is_local)
 
 	while (true) {
 		token = look;
-
-		if (!match(TK_ID)) {
-			goto error_in_var_def;
-		}
+		MATCH_OR_ERROR(TK_ID, error_in_var_def);
 
 		if (look->type == '[') {
-			Type *t = new_type(TYPE_ARRAY);
-			t->array_of = type;
+			Type *type_of_array = new_type(TYPE_ARRAY);
+			type_of_array->array_of = type;
 			move();
 
 			if (look->type == TK_NUML) {
-				t->len = look->value;
+				type_of_array->len = look->value;
 				move();
 			}
 			else {
@@ -556,21 +557,19 @@ static Vector *var_def(bool is_local)
 				goto error_in_var_def;
 			}
 
-			t->size = t->array_of->size * t->len;
+			type_of_array->size = type_of_array->array_of->size * type_of_array->len;
 			
-			if (!match(']')) {
-				goto error_in_var_def;
-			}
-			symbol = new_symbol(token->lexeme, t);
+			MATCH_OR_ERROR(']', error_in_var_def);
+			symbol = new_symbol(token->lexeme, type_of_array);
 		}
 		else {
 			symbol = new_symbol(token->lexeme, type);
 		}
+
 		if (is_local)
 			symbol->flag = SYMBOL_LOCAL;
 		if (enter_symbol(token, symbol)) {
 			node = new_node(ND_VAR_DEF);
-			node->id_type = symbol->type;
 			node->symbol = symbol;
 			vec_put(defs, node);
 		}
@@ -615,8 +614,7 @@ static Node *func_with_ret_value_decl()
 	Token *start= look;
 
 	func_id = func_with_ret_value_decl_head();
-	if (func_id == NULL)
-		goto error_in_head_of_func_with_ret_value_decl;
+	NOT_NULL_OR_ERROR(func_id, error_in_head_of_func_with_ret_value_decl);
 
 	saved_env = top;
 	top = new_env(top);
@@ -624,16 +622,12 @@ static Node *func_with_ret_value_decl()
 	if (look->type == '(') {
 		move();
 		func_id->type->params_list = param_list();
-		if (func_id->type->params_list == NULL)
-			goto error_in_func_with_ret_value_decl;
-		if (!match(')'))
-			goto error_in_func_with_ret_value_decl;
+		NOT_NULL_OR_ERROR(func_id->type->params_list, error_in_func_with_ret_value_decl);
+		MATCH_OR_ERROR(')', error_in_func_with_ret_value_decl);
 	}
-
-	if (!match('{'))
-		goto error_in_func_with_ret_value_decl;
+	MATCH_OR_ERROR('{', error_in_func_with_ret_value_decl);
 	body = compound_stmt();
-	if (body == NULL) {
+	if (body == NULL) {	// error handling
 		if (look->type == '}') {
 			move();
 		}
@@ -641,8 +635,12 @@ static Node *func_with_ret_value_decl()
 		parser_demo(start, look_prev, "错误的<有返回值函数定义>");
 		return NULL;
 	}
-	if (!match('}'))
-		goto error_in_func_with_ret_value_decl;
+	MATCH_OR_ERROR('}', error_in_func_with_ret_value_decl);
+	if (!current_func_has_return) {
+		errorf(start, "return with no value, in function returning '%s'",
+			current_func->type->ret->name);
+		SEMANTIC_ERROR(error_in_program);
+	}
 	top = saved_env;
 	parser_demo(start, look_prev, "<有返回值函数定义>");
 	return new_func_decl_node(func_id, body, this_env);
@@ -671,8 +669,7 @@ static Symbol * func_with_ret_value_decl_head()
 
 	move();
 	token = look;
-	if (!match(TK_ID))
-		goto error_in_func_with_ret_value_decl_head;
+	MATCH_OR_ERROR(TK_ID, error_in_func_with_ret_value_decl_head);
 	symbol = new_symbol(token->lexeme, type);
 	enter_symbol(token, symbol);
 
@@ -697,10 +694,9 @@ static Vector * param_list()
 	while (true) {
 		type = type_specifier();
 		token = look;
-		if (!match(TK_ID))
-			goto error_in_param_list;
+		MATCH_OR_ERROR(TK_ID, error_in_param_list);
 		symbol = new_symbol(token->lexeme, type);
-		symbol->flag |= SYMBOL_PARAM | SYMBOL_LOCAL;
+		symbol->flag = SYMBOL_PARAM | SYMBOL_LOCAL;
 		enter_symbol(token, symbol);
 		node = new_id_node(token, symbol);
 		vec_put(params, node);
@@ -730,9 +726,7 @@ static Node *func_without_ret_value_decl()
 
 	match(TK_VOID);
 	token = look;
-	if (!match(TK_ID)) {
-		goto error_in_head_of_func_without_ret_value_decl;
-	}
+	MATCH_OR_ERROR(TK_ID, error_in_head_of_func_without_ret_value_decl);
 	symbol = new_symbol(token->lexeme, type);
 	enter_symbol(token, symbol);
 	saved_env = top;
@@ -741,14 +735,10 @@ static Node *func_without_ret_value_decl()
 	if (look->type == '(') {
 		move();
 		symbol->type->params_list = param_list();
-		if (symbol->type->params_list == NULL)
-			goto error_in_func_without_ret_value_decl;
-		if (!match(')'))
-			goto error_in_func_without_ret_value_decl;
+		NOT_NULL_OR_ERROR(symbol->type->params_list, error_in_func_without_ret_value_decl);
+		MATCH_OR_ERROR(')', error_in_head_of_func_without_ret_value_decl);
 	}
-
-	if (!match('{'))
-		goto error_in_func_without_ret_value_decl;
+	MATCH_OR_ERROR('{', error_in_func_without_ret_value_decl);
 	body = compound_stmt();
 	if (body == NULL) {
 		if (look->type == '}')
@@ -757,12 +747,10 @@ static Node *func_without_ret_value_decl()
 		parser_demo(start, look_prev, "错误的<无返回值函数定义>");
 		return NULL;
 	}
-	if (!match('}'))
-		goto error_in_func_without_ret_value_decl;
+	MATCH_OR_ERROR('}', error_in_func_without_ret_value_decl);
 	top = saved_env;
 	parser_demo(start, look_prev, "<无返回值函数定义>");
 	return new_func_decl_node(symbol, body, this_env);
-
 	
 error_in_func_without_ret_value_decl:
 	top = saved_env;
@@ -776,10 +764,12 @@ static Node * main_func()
 {
 	Node *node = new_node(ND_MAIN);
 	Env *saved_env;
-	Token *start = look;
+	Token *start = look, *token;
 	bool error = false;
 
 	match(TK_VOID);
+	token = look;	// expected to be 'main'
+	enter_symbol(token, new_symbol(token->lexeme, new_type(TYPE_FUNC)));
 	match(TK_MAIN);
 	if (match('(') && match(')') && match('{')) {
 		;
@@ -813,6 +803,7 @@ static Node * main_func()
 	
 }
 
+
 static Node * compound_stmt()
 {
 	Node *node = new_node(ND_COMPOUND);
@@ -821,20 +812,16 @@ static Node * compound_stmt()
 
 	if (look->type == TK_CONST) {
 		node->const_decl = const_decl(true);
-		if (node->const_decl == NULL)
-			error = true;
+		SET_ERROR_IF_NULL(node->const_decl);
 	}
 
 	if (eq_oneof(2, look->type, TK_INT, TK_CHAR)) {
 		node->var_decl = var_decl(true);
-		if (node->var_decl == NULL)
-			error = true;
+		SET_ERROR_IF_NULL(node->var_decl);
 	}
 
 	node->stmt1 = stmts();	// 语句列
-	if (node->stmt1 == NULL) {
-		error = true;
-	}
+	SET_ERROR_IF_NULL(node->stmt1);
 
 	if (!error) {
 		parser_demo(start, look_prev, "<复合语句>");
@@ -909,8 +896,7 @@ static Node *stmt()
 			node = null_stmt();
 			break;
 		}
-		if (node == NULL)
-			error = true;	// no need to skip, just report syntax error.
+		SET_ERROR_IF_NULL(node);	// no need to skip, just report syntax error.
 	}
 	else if (eq_oneof(4, look->type, TK_SCANF, TK_PRINTF, TK_RETURN, TK_ID)){
 		// stmt ends with a ';' if error occurs we need to skip some tokens
@@ -931,11 +917,8 @@ static Node *stmt()
 				node = assign_stmt();
 			break;
 		}
-
-		if (node == NULL)
-			goto error_in_stmt;
-		if (!match(';'))
-			goto error_in_stmt;
+		NOT_NULL_OR_ERROR(node, error_in_stmt);
+		MATCH_OR_ERROR(';', error_in_stmt);
 	}
 	else {
 		errorf(look, "expected a statement");
@@ -966,30 +949,19 @@ static Node * if_stmt()
 	Node *else_stmt = NULL;
 
 	match(TK_IF); 
-	if (!match('(')) {
-		goto error_in_if_stmt;
-	}
+	MATCH_OR_ERROR('(', error_in_if_stmt);
 
 	cond_of_if = condition();
-	if (cond_of_if == NULL) {
-		goto error_in_if_stmt;
-	}
-	
-	if (!match(')')) {
-		goto error_in_if_stmt;
-	}
+	NOT_NULL_OR_ERROR(cond_of_if, error_in_if_stmt);
+	MATCH_OR_ERROR(')', error_in_if_stmt);
 
 	then_stmt = stmt();	// 需要修改
-	if (then_stmt == NULL) {
-		goto error_in_sub_stmt_of_if_stmt;
-	}
+	NOT_NULL_OR_ERROR(then_stmt, error_in_sub_stmt_of_if_stmt);
 
 	if (look->type == TK_ELSE) {
 		match(TK_ELSE);
 		else_stmt = stmt();	// 需要修改
-		if (else_stmt == NULL) {
-			goto error_in_sub_stmt_of_if_stmt;
-		}
+		NOT_NULL_OR_ERROR(else_stmt, error_in_sub_stmt_of_if_stmt);
 	}
 
 	parser_demo(start, look_prev, "<条件语句>");
@@ -1007,19 +979,30 @@ static Node * condition()
 {
 	Node *left = NULL, *right = NULL;
 	Token *op = NULL, *start = look;
+	Type *left_type, *right_type;
 
 	left = expr();
-	if (expr == NULL)
-		goto error_in_condition;
+	NOT_NULL_OR_ERROR(left, error_in_condition);
 
 	if (eq_oneof(6, look->type, TK_LS, TK_LE, TK_GT, TK_GE, TK_EQ, TK_NE)) {
 		// <条件> -> <表达式> <relop> <表达式>
 		op = look;
 		move();
 		right = expr();
-		if (right == NULL)
-			goto error_in_condition;
+		NOT_NULL_OR_ERROR(right, error_in_condition);
 	} // else <条件> -> <表达式>
+
+	// type-checking
+	left_type = type_of_expr(left);
+	if (right != NULL) {
+		right_type = type_of_expr(right);
+		if (left_type->type != TYPE_INT || right_type->type != TYPE_INT)
+			errorf(start, "'int' type expected");
+	}
+	else if (left_type->type != TYPE_INT) {
+		errorf(start, "'int' type expected");
+	}
+
 	
 	parser_demo(start, look_prev, "<条件>");
 	return new_cond_node(op, left, right);
@@ -1035,23 +1018,12 @@ static Node * while_stmt()
 	Token *start = look;
 	match(TK_WHILE);
 
-	if (!match('(')) {
-		goto error_in_while_stmt;
-	}
-
+	MATCH_OR_ERROR('(', error_in_while_stmt);
 	cond_of_while = condition();
-	if (cond_of_while == NULL) {
-		goto error_in_while_stmt;
-	}
-
-	if (!match(')')) {
-		goto error_in_while_stmt;
-	}
-
+	NOT_NULL_OR_ERROR(cond_of_while, error_in_while_stmt);
+	MATCH_OR_ERROR(')', error_in_while_stmt);
 	body = stmt();
-	if (body == NULL) {
-		goto error_in_sub_stmt_of_while_stmt;
-	}
+	NOT_NULL_OR_ERROR(body, error_in_sub_stmt_of_while_stmt);
 
 	parser_demo(start, look_prev, "<循环语句>");
 	return new_while_node(cond_of_while, body);
@@ -1069,35 +1041,21 @@ static Node * for_stmt()
 	Token *start = look;
 	match(TK_FOR);
 
-	if (!match('(')) {
-		goto error_in_for_stmt;
-	}
-
+	MATCH_OR_ERROR('(', error_in_for_stmt);
 	init = for_init();
-	if (init == NULL) {
-		goto error_in_for_stmt;
-	}
-
-	if (!match(';'))
-		goto error_in_for_stmt;
+	NOT_NULL_OR_ERROR(init, error_in_for_stmt);
+	MATCH_OR_ERROR(';', error_in_for_stmt);
 
 	cond = condition();
-	if (cond == NULL)
-		goto error_in_for_stmt;
-
-	if (!match(';'))
-		goto error_in_for_stmt;
+	NOT_NULL_OR_ERROR(cond, error_in_for_stmt);
+	MATCH_OR_ERROR(';', error_in_for_stmt);
 
 	inc = for_inc();
-	if (inc == NULL)
-		goto error_in_for_stmt;
-
-	if (!match(')'))
-		goto error_in_for_stmt;
+	NOT_NULL_OR_ERROR(inc, error_in_for_stmt);
+	MATCH_OR_ERROR(')', error_in_for_stmt);
 
 	body = stmt();
-	if (body == NULL)
-		goto error_in_sub_stmt_of_for_stmt;
+	NOT_NULL_OR_ERROR(body, error_in_sub_stmt_of_for_stmt);
 
 	parser_demo(start, look_prev, "<循环语句>");
 	return new_for_node(init, cond, inc, body);
@@ -1113,11 +1071,9 @@ static Node * for_init()
 {
 	Token *token = look;
 	Node *e;
-	if (!match(TK_ID))
-		return NULL;
+	MATCH_OR_RETURN_NULL(TK_ID);
 	Symbol *symbol = assert_decld_id(token);
-	if (!match('='))
-		return NULL;
+	MATCH_OR_RETURN_NULL('=');
 	e = expr();
 	if (e == NULL)
 		return NULL;
@@ -1131,17 +1087,12 @@ static Node * for_inc()
 	Node *node, *left, *right;
 
 	token = look;
-	if (!match(TK_ID))
-		return NULL;
+	MATCH_OR_RETURN_NULL(TK_ID);
 	symbol = assert_decld_id(token);
 	node = new_id_node(token, symbol);
-	
-	if (!match('='))
-		return NULL;
-	
+	MATCH_OR_RETURN_NULL('=');
 	token = look;
-	if (!match(TK_ID))
-		return NULL ;
+	MATCH_OR_RETURN_NULL(TK_ID);
 	symbol = assert_decld_id(token);
 	left = new_id_node(token, symbol);
 
@@ -1169,6 +1120,37 @@ static Node * for_inc()
 	return new_for_inc_node(node, right);
 }
 
+static args_list_type_checking(Vector *arg_list, Vector *param_list, Symbol *func,
+	Token *tok_of_func)
+{
+	Node *arg;
+	Type *arg_t, *param_t;
+	if (!param_list && arg_list) {
+		errorf(tok_of_func, "too many arguments to function '%s'", func->name);
+		SEMANTIC_ERROR(error_in_program);
+	}
+	else if (param_list && !arg_list) {
+		errorf(tok_of_func, "too few arguments to function '%s'", func->name);
+		SEMANTIC_ERROR(error_in_program);
+	}
+	else if (param_list && arg_list) {
+		for (int i = 0; i < arg_list->len && i < param_list->len; i++) {
+			arg = vec_get(arg_list, i);
+			arg_t = type_of_expr(arg);
+			param_t = ((Node *)(vec_get(param_list, i)))->symbol->type;
+			if (arg_t->type != param_t->type) {
+				errorf(arg->token, "implicit conversion from '%s' to '%s'",
+					arg_t->name, param_t->name);
+			}
+		}
+		if (arg_list->len != param_list->len) {
+			errorf(tok_of_func, "too %s arguments to function '%s'",
+				arg_list->len < param_list->len ? "few" : "many", func->name);
+			SEMANTIC_ERROR(error_in_program);
+		}
+	}
+}
+
 /* Pre-conditions: look is an identifier, */
 static Node * func_call()
 {
@@ -1181,40 +1163,36 @@ static Node * func_call()
 
 	token = look;
 	match(TK_ID);
+	symbol = assert_decld_id(token);
+	/*
 	symbol = lookup_symbol(token->lexeme);
 
 	if (symbol == NULL) {
 		/* If this function hasn't been not declared, we cannot perform semantic
 		   type checking. What we can do is to return NULL and let the caller stmt()
-		   skip this statement.*/
+		   skip this statement.
 		errorf(token, "implicit declaration of function '%s'", token->lexeme);
-		error = true;
-	}
+		SEMANTIC_ERROR(error);
+	}*/
 
 	if (!error) {
 		f = symbol->type;
 		if (f->type != TYPE_FUNC) {
 			errorf(token, "called object '%s' is not a function", token->lexeme);
-			error = true;
+			SEMANTIC_ERROR(error);
 		}
 	}
 	
-
-	// TODO: args checking
 	if (look->type == '(') {
-		if (!error && f->params_list == NULL) {
-			errorf(look, "passing args to function '%s' with no parameters", symbol->name);
-			error = true;
-		}
-
 		move();
 		args = args_list();
-		if (args == NULL)
-			goto error_in_func_call;
+		NOT_NULL_OR_ERROR(args, error_in_func_call);
+		MATCH_OR_ERROR(')', error_in_func_call);
+	}
 
-		if (!match(')'))
-			goto error_in_func_call;
-		// TODO: type-checking
+	// type-checking
+	if (!error) {
+		args_list_type_checking(args, f->params_list, symbol, start);
 	}
 
 	node = new_node(ND_FUNC_CALL);
@@ -1236,8 +1214,7 @@ static Vector *args_list()
 
 	while (true) {
 		e = expr();
-		if (e == NULL)
-			goto error_in_args_list;
+		NOT_NULL_OR_ERROR(e, error_in_args_list);
 		vec_put(list, e);
 		if (look->type != ',')
 			break;
@@ -1257,45 +1234,50 @@ static Node * assign_stmt()
 	Symbol *symbol;
 	Token *token, *start = look;
 	Node *lhs = NULL, *rhs = NULL;
-	Type *lhs_type, *rhs_type;
+	Type *lhs_type = NULL, *rhs_type = NULL;
 	bool error = false;	// No need to skip if we meet semantic error.
 
 	token = look;
 	match(TK_ID);
 	symbol = assert_decld_id(token);
 
-	if (eq_oneof(2, symbol->type->type, TYPE_CONST_INT, TYPE_CONST_CHAR)) {
-		errorf(token, "assignment of read-only variable '%s'", token->lexeme);
-		error = true;
-	}
-
-	if (symbol->type->type == TYPE_ARRAY) {
-		if (!match('['))
-			goto error_in_assign_stmt;
+	if (look->type == '[') {
+		MATCH_OR_ERROR('[', error_in_assign_stmt);
 		Node *index = expr();
-		if (index == NULL)
-			goto error_in_assign_stmt;
-		if (!match(']'))
-			goto error_in_assign_stmt;
-		lhs = new_array_access_node(symbol, index);
-		lhs_type = symbol->type->array_of;
-	}
-	else if (eq_oneof(2, symbol->type->type, TYPE_INT, TYPE_CHAR)){
-		lhs = new_id_node(token, symbol);
-		lhs_type = symbol->type;
+		NOT_NULL_OR_ERROR(index, error_in_assign_stmt);
+		MATCH_OR_ERROR(']', error_in_assign_stmt);
+		if (symbol->type->type == TYPE_ARRAY) {
+			lhs = new_array_access_node(symbol, index);
+			lhs_type = symbol->type->array_of;
+		}
+		else {
+			errorf(start, "'%s' is not an array", symbol->name);
+			SEMANTIC_ERROR(error);
+		}
 	}
 	else {
-		errorf(token, "lvalue required as left operand of assignment");
-		error = true;
+		lhs = new_id_node(token, symbol);
+		lhs_type = symbol->type;
+		if (eq_oneof(2, symbol->type->type, TYPE_CONST_INT, TYPE_CONST_CHAR)) {
+			errorf(token, "assignment of read-only variable '%s'", token->lexeme);
+			SEMANTIC_ERROR(error);
+		}
+		else if (!eq_oneof(2, symbol->type->type, TYPE_INT, TYPE_CHAR)) {
+			errorf(token, "lvalue required as left operand of assignment");
+			SEMANTIC_ERROR(error);
+		}
 	}
 
-	if (!match('='))
-		goto error_in_assign_stmt;
+	MATCH_OR_ERROR('=', error_in_assign_stmt);
 	
 	rhs = expr();
-	if (rhs == NULL)
-		goto error_in_assign_stmt;
-	
+	NOT_NULL_OR_ERROR(rhs, error_in_assign_stmt);
+
+	rhs_type = type_of_expr(rhs);
+	if (!error && lhs_type->type != rhs_type->type)
+		errorf(start, "implicit conversion from '%s' to '%s'", 
+			rhs_type->name, lhs_type->name);
+
 	parser_demo(start, look_prev, "<赋值语句>");
 	return new_assignment_node(lhs, rhs);
 
@@ -1312,13 +1294,11 @@ static Node * read_stmt()
 	Node *node;
 
 	match(TK_SCANF);
-	if (!match('('))
-		goto error_in_read_stmt;
+	MATCH_OR_ERROR('(', error_in_read_stmt);
 
 	while (true) {
 		token = look;
-		if (!match(TK_ID))
-			goto error_in_read_stmt;
+		MATCH_OR_ERROR(TK_ID, error_in_read_stmt);
 		symbol = assert_decld_id(token);
 		vec_put(args, new_id_node(token, symbol));
 		if (look->type != ',') {
@@ -1326,8 +1306,7 @@ static Node * read_stmt()
 		}
 		move();
 	}
-	if (!match(')'))
-		goto error_in_read_stmt;
+	MATCH_OR_ERROR(')', error_in_read_stmt);
 
 	node = new_node(ND_READ_STMT);
 	node->args = args;
@@ -1346,8 +1325,7 @@ static Node * write_stmt()
 	Token *start = look;
 
 	match(TK_PRINTF);
-	if (!match('('))
-		goto error_in_write_stmt;
+	MATCH_OR_ERROR('(', error_in_write_stmt);
 	if (look->type == TK_STRL) {
 		node->string = look->lexeme;
 		node->string_label = enter_string(node->string);
@@ -1355,18 +1333,15 @@ static Node * write_stmt()
 		if (look->type == ',') {
 			move();
 			e = expr();
-			if (e == NULL)
-				goto error_in_write_stmt;
+			NOT_NULL_OR_ERROR(e, error_in_write_stmt);
 		}
 	}
 	else {	// an expr is expected
 		e = expr();
-		if (e == NULL)
-			goto error_in_write_stmt;
+		NOT_NULL_OR_ERROR(e, error_in_write_stmt);
 	}
 	node->left = e;
-	if (!match(')'))
-		goto error_in_write_stmt;
+	MATCH_OR_ERROR(')', error_in_write_stmt);
 
 	parser_demo(start, look_prev, "<写语句>");
 	return node;
@@ -1380,18 +1355,32 @@ static Node * return_stmt()
 {
 	Node *node, *e;
 	Token *start = look;
+	Type *expr_type;
+	current_func_has_return = true;
 	match(TK_RETURN);
 	node = new_node(ND_RETURN_STMT);
 	if (look->type == '(') {
 		move();
 		e = expr();
-		if (e == NULL)
-			goto error_in_return_stmt;
-
-		if (!match(')'))
-			goto error_in_return_stmt;
+		NOT_NULL_OR_ERROR(e, error_in_return_stmt);
+		MATCH_OR_ERROR(')', error_in_return_stmt);
 		node->left = e;
+		expr_type = type_of_expr(e);
+		if (current_func->type->ret == NULL) {
+			errorf(e->token, "'return' with a value, in function returning void");
+			SEMANTIC_ERROR(error_in_program);
+		}
+		else if (current_func->type->ret->type != expr_type->type) {
+			errorf(e->token, "implicit conversion from '%s' to '%s'",
+				expr_type->name, current_func->type->ret->name);
+		}
 	}
+	else if (current_func->type->ret != NULL) {
+		errorf(start, "'return' with no value, in function returning '%s'", 
+			current_func->type->ret->name);
+		SEMANTIC_ERROR(error_in_program);
+	}
+
 	parser_demo(start, look_prev, "<返回语句>");
 	return node;
 
@@ -1423,18 +1412,18 @@ static Node * expr()
 	}
 	else {
 		left = term();
-		if (left == NULL)
-			goto error_in_expr;
+		NOT_NULL_OR_ERROR(left, error_in_expr);
 	}
 
 	while (eq_oneof(2, look->type, '+', '-')) {
 		op = look;
 		move();
 		right = term();
-		if (right == NULL)
-			goto error_in_expr;
+		NOT_NULL_OR_ERROR(right, error_in_expr);
 		left = new_expr_node(op, left, right);
 	}
+	left->token = start;
+	//printf("type: %s\n", type_of_expr(left)->type == TYPE_CHAR ? "char" : "int");
 	parser_demo(start, look_prev, "<表达式>");
 	return left;
 error_in_expr:
@@ -1447,14 +1436,12 @@ static Node * term()
 	Node *left, *right;
 	Token *op, *start = look;
 	left = factor();
-	if (left == NULL)
-		goto error_in_term;
+	NOT_NULL_OR_ERROR(left, error_in_term);
 	while (eq_oneof(2, look->type, '*', '/')) {
 		op = look;
 		move();
 		right = factor();
-		if (right == NULL)
-			goto error_in_term;
+		NOT_NULL_OR_ERROR(right, error_in_term);
 		left = new_expr_node(op, left, right);
 	}
 	parser_demo(start, look_prev, "<项>");
@@ -1478,36 +1465,30 @@ static Node * factor()
 		}
 		else if (symbol->type->type == TYPE_ARRAY) {
 			move();
-			if (!match('['))
-				goto error_in_factor;
+			MATCH_OR_ERROR('[', error_in_factor);
 			Node *index = expr();
-			if (index == NULL)
-				goto error_in_factor;
-			if (!match(']'))
-				goto error_in_factor;
-				node = new_array_access_node(symbol, index);
+			NOT_NULL_OR_ERROR(index, error_in_factor);
+			MATCH_OR_ERROR(']', error_in_factor);
+			node = new_array_access_node(symbol, index);
 		}
 		else if (symbol->type->type == TYPE_FUNC) {
 			if (symbol->type->ret == NULL) {
 				errorf(look, "expression returning void");
 			}
 			node = func_call();
-			if (node == NULL)
-				goto error_in_factor;
+			NOT_NULL_OR_ERROR(node, error_in_factor);
 		}
 	}
 	else if (look->type == '(') {
 		move();
 		node = expr();
-		if (node == NULL)
-			goto error_in_factor;
-		if (!match(')'))
-			goto error_in_factor;
+		NOT_NULL_OR_ERROR(node, error_in_factor);
+		MATCH_OR_ERROR(')', error_in_factor);
+		node->with_paren = true;
 	}
 	else if (eq_oneof(3, look->type, TK_NUML, '+', '-')) {
 		node = signed_integer();
-		if (node == NULL)
-			goto error_in_factor;
+		NOT_NULL_OR_ERROR(node, error_in_factor);
 	}
 	else if (look->type == TK_CHARL) {
 		node = new_node(ND_CHARL);
@@ -1530,6 +1511,14 @@ error_in_factor:
 // 需要修改
 static Type *type_of_expr(Node *e)
 {
+	if (!e->with_paren && (e->nd_type == ND_CHARL
+		|| (e->nd_type == ND_ARR_ACCESS
+			&& eq_oneof(2, e->symbol->type->array_of->type, TYPE_CHAR, TYPE_CONST_CHAR))
+		|| (e->nd_type == ND_ID
+			&& eq_oneof(2, e->symbol->type->type, TYPE_CHAR, TYPE_CONST_CHAR))
+		|| (e->nd_type == ND_FUNC_CALL
+			&& eq_oneof(2, e->symbol->type->ret->type, TYPE_CHAR, TYPE_CONST_CHAR))))
+		return new_type(TYPE_CHAR);
 	return new_type(TYPE_INT);
 }
 
@@ -1540,9 +1529,11 @@ Type *new_type(int type)
 	switch (type) {
 	case TYPE_INT: case TYPE_CONST_INT:
 		t->size = 4;
+		t->name = "int";
 		break;
 	case TYPE_CHAR: case TYPE_CONST_CHAR:
 		t->size = 1;
+		t->name = "char";
 		break;
 	}
 	return t;

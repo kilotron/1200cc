@@ -5,9 +5,10 @@
 #define LOCAL_NOT_SPILL 0x4
 //Program *prog;
 
-int offset_of_first_var_in_stack_from_fp;	// always non-negative.
-int spill = REG_T0;	// temporary register to spill
-FILE *fp;
+static int offset_of_first_var_in_stack_from_fp;	// always non-negative.
+static int spill = REG_T0;	// temporary register to spill
+static FILE *fp;
+static int print_option;
 
 char *name[] = { 
 	"$zero", "$at", "$v0", "$v1", "$a0", "$a1", "$a2", "$a3",
@@ -17,12 +18,13 @@ char *name[] = {
 };
 Reg_Des *reg_des;
 Env *env;			// to access symbols
-bool main_func = false;
+bool is_main_func = false;
 
-void print_env(Env *env)
+static void print_env(Env *env)
 {
-	for (int i = 0; i < env->symbols->keys->len; i++) {
-		char *key = vec_get(env->symbols->keys, i);
+	Vector_Iterator *itr = vec_itr(env->symbols->keys);
+	while (vec_has_next(itr)) {
+		char *key = vec_next(itr);
 		Symbol *s = map_get(env->symbols, key);
 		printf("name: %s, offset: %d\n", key, s->offset);
 	}
@@ -33,10 +35,14 @@ static void emitl(char *fmt, ...)
 {
 	va_list va;
 	va_start(va, fmt);
-	vprintf(fmt, va);
-	printf("\n");
-	vfprintf(fp, fmt, va);
-	fprintf(fp, "\n");
+	if (print_option & PRINT_TO_CONSOLE) {
+		vprintf(fmt, va);
+		printf("\n");
+	}
+	if (print_option & PRINT_TO_FILE) {
+		vfprintf(fp, fmt, va);
+		fprintf(fp, "\n");
+	}
 	va_end(va);
 }
 
@@ -46,19 +52,23 @@ static void emit(char *fmt, ...)
 {
 	va_list va;
 	va_start(va, fmt);
-	printf("\t");
-	vprintf(fmt, va);
-	printf("\n");
-	fprintf(fp, "\t");
-	vfprintf(fp, fmt, va);
-	fprintf(fp, "\n");
+	if (print_option & PRINT_TO_CONSOLE) {
+		printf("\t");
+		vprintf(fmt, va);
+		printf("\n");
+	}
+	if (print_option & PRINT_TO_FILE) {
+		fprintf(fp, "\t");
+		vfprintf(fp, fmt, va);
+		fprintf(fp, "\n");
+	}
 	va_end(va);
 }
 
 /* Initialize register descpritor: all saved registers and temporary registers
    are free. This function should be called before each function declaration.
    and before generating mips instructions. */
-void reg_des_init()
+static void reg_des_init()
 {
 	reg_des = calloc(1, sizeof(Reg_Des));
 	reg_des->saved_reg = new_map();
@@ -66,12 +76,12 @@ void reg_des_init()
 }
 
 /* Reg reg_num is temporary register.*/
-void reg_des_bind(int reg_num, Symbol *s)
+static void reg_des_bind(int reg_num, Symbol *s)
 {
 	map_put(reg_des->temp_reg, name[reg_num], s);
 }
 
-void reg_des_unbind(int reg_num)
+static void reg_des_unbind(int reg_num)
 {
 	map_put(reg_des->temp_reg, name[reg_num], NULL);
 }
@@ -112,13 +122,14 @@ void reg_des_unbind(int reg_num)
    3.global variables or constants: To simplify accessing variables, we use directives
 	 to allocate space for them and get them initialized. In this case, the name of
 	 the identifier is sufficient to load the symbol. */
-void load_reg(int reg_num, Symbol *symbol)
+static void load_reg(int reg_num, Symbol *symbol)
 {
 	if (symbol->addr_des.in_reg)
 		return;
 
 	if (symbol->flag & SYMBOL_PARAM) {
-		emit("lw %s, %d($fp)", name[reg_num], symbol->offset + WORD_SIZE);
+		if (symbol->addr_des.in_mem)
+			emit("lw %s, %d($fp)", name[reg_num], symbol->offset + WORD_SIZE);
 	}
 	else if (symbol->flag & SYMBOL_LOCAL) {	// local var or const
 		int offset = offset_of_first_var_in_stack_from_fp - symbol->offset;
@@ -129,16 +140,16 @@ void load_reg(int reg_num, Symbol *symbol)
 		else if (eq_oneof(2, symbol->type->type, TYPE_CONST_CHAR, TYPE_CONST_INT)) {
 			emit("li %s, %d", name[reg_num], symbol->value);
 		}	// else TYPE_INT or TYPE_CHAR
-		else if (symbol->addr_des.in_mem && !symbol->addr_des.in_reg) {
+		else if (symbol->addr_des.in_mem) {
 			emit("lw %s, %d($fp)", name[reg_num], offset);
 		}
 	}
 	else {	// global variable or constant
 		if (symbol->type->type == TYPE_ARRAY) {
-			emit("la %s, %s", name[reg_num], symbol->name);
+			emit("la %s, g_%s", name[reg_num], symbol->name);
 		}
 		else {	// const int or char, int, char
-			emit("lw %s, %s($zero)", name[reg_num], symbol->name);
+			emit("lw %s, g_%s($zero)", name[reg_num], symbol->name);
 		}
 	}
 	
@@ -148,7 +159,7 @@ void load_reg(int reg_num, Symbol *symbol)
 /* If symbol s is variable int or char(not array or constant),
    s is in a register and has newest value in
    register but not in memory, write it back to memory. */
-void spill_reg(Symbol *s)
+static void spill_reg(Symbol *s)
 {
 	if (s != NULL && (s->type->type == TYPE_INT || s->type->type == TYPE_CHAR)
 		&& s->addr_des.reg_num && !s->addr_des.in_mem && s->addr_des.in_reg) {
@@ -161,7 +172,7 @@ void spill_reg(Symbol *s)
 				offset_of_first_var_in_stack_from_fp - s->offset);
 		}
 		else {	// global
-			emit("sw %s, %s($zero)", name[s->addr_des.reg_num], s->name);
+			emit("sw %s, g_%s($zero)", name[s->addr_des.reg_num], s->name);
 		}
 
 		s->addr_des.in_mem = true;
@@ -171,7 +182,7 @@ void spill_reg(Symbol *s)
 /* If reg reg_num is free, allocates it to symbol, 
    and returns true else returns false.
    Update register descriptor and address descriptor if allocated successfully.*/
-bool alloc_if_free(int reg_num, Symbol *symbol)
+static bool alloc_if_free(int reg_num, Symbol *symbol)
 {
 	if (map_get(reg_des->temp_reg, name[reg_num]) == NULL) {
 		reg_des_bind(reg_num, symbol);
@@ -187,7 +198,7 @@ bool alloc_if_free(int reg_num, Symbol *symbol)
    to memory since it doesn't have a place in memory. No need to store array
    address since we can calculate it at compile time).
    Update register descriptor and address descriptor. */
-void alloc_forced(int reg_num, Symbol *symbol)
+static void alloc_forced(int reg_num, Symbol *symbol)
 {
 	Symbol *s = map_get(reg_des->temp_reg, name[reg_num]);
 
@@ -202,7 +213,7 @@ void alloc_forced(int reg_num, Symbol *symbol)
 }
 
 /**/
-void get_rhs_reg(Reg *r)
+static void get_rhs_reg(Reg *r)
 {
 	if (r->type == REG_NUM) {
 		for (int i = REG_T8; i <= REG_T9; i++) {
@@ -239,7 +250,7 @@ void get_rhs_reg(Reg *r)
 }
 
 /* This register is going to be modified.*/
-void get_lhs_reg(Reg *r)
+static void get_lhs_reg(Reg *r)
 {
 	// assert t->symbol->type->type is int or char 
 	if (r->symbol->addr_des.reg_num) {
@@ -264,9 +275,24 @@ get_lhs_reg_exit:
 	r->symbol->addr_des.in_mem = false;
 }
 
+/* Make sure that param 0-3 is in reg and not in memory, param n>3 is in mem
+   upon entry and exit of a basic block. This function should be called
+   at the end of a basic block. */
+static void params_clean_up_at_end_of_bb()
+{
+	Symbol *s;
+	for (int i = 0; i < env->symbols->values->len; i++) {
+		s = vec_get(env->symbols->values, i);
+		if (s->flag & SYMBOL_PARAM) {
+			load_reg(s->addr_des.reg_num, s);
+			s->addr_des.in_mem = false;
+		}
+	}
+}
+
 /* var includes local variable and parameters in a function.
    This function should be called after reg_des_init() is called.*/
-void alloc_local_var()
+static void alloc_local_var()
 {
 	Symbol *symbol;
 	for (int i = 0; i < env->symbols->values->len; i++) {
@@ -306,7 +332,7 @@ void alloc_local_var()
 }
 
 /* Allocate temporary register for TAC t. */
-void get_reg(IR *t)
+static void get_reg(IR *t)
 {
 	if (t->arg1)
 		get_rhs_reg(t->arg1);
@@ -316,12 +342,12 @@ void get_reg(IR *t)
 		get_lhs_reg(t->result);
 }
 
-char *reg(Reg *r)
+static char *reg(Reg *r)
 {
 	return name[r->rn];
 }
 
-/* Write temporary registers(excpet t8 and t9) back to memory if necessary
+/* Write temporary registers(except t8 and t9) back to memory if necessary
    (the register holds a variable int or char(not array), and the var has 
    newest value in register but not in memory). Those temporary registers
    are freed. The register descriptor and variable address descriptor are
@@ -331,7 +357,7 @@ char *reg(Reg *r)
    LOCAL_NOT_SPILL: Unallocate local variables without write it back to 
 					memory, this flag is valid when FLUSH_LOCAL is on.
    FLUSH_GLOBAL: Global variables(or constants) are unallocated.*/
-void flush_temp_reg(int flag)
+static void flush_temp_reg(int flag)
 {
 	char *key;
 	Symbol *s;
@@ -354,7 +380,7 @@ void flush_temp_reg(int flag)
 }
 
 
-void ir2mips(IR *t, bool end_of_bb)
+static void ir2mips(IR *t, bool end_of_bb)
 {
 	int offset;
 	Symbol *s;
@@ -364,8 +390,10 @@ void ir2mips(IR *t, bool end_of_bb)
 		get_reg(t);
 
 	// after get_reg(), do this before jumping
-	if (eq_oneof(8, t->op, IR_LS, IR_GT, IR_EQ, IR_NE, IR_LE, IR_GE, IR_EXPR_BRANCH, IR_GOTO))
+	if (eq_oneof(8, t->op, IR_LS, IR_GT, IR_EQ, IR_NE, IR_LE, IR_GE, IR_EXPR_BRANCH, IR_GOTO)) {
 		flush_temp_reg(FLUSH_LOCAL | FLUSH_GLOBAL);
+		params_clean_up_at_end_of_bb();
+	}
 	
 	switch (t->op) {
 	case IR_TIMES:
@@ -460,7 +488,7 @@ void ir2mips(IR *t, bool end_of_bb)
 		s = vec_get(env->symbols->values, 0);
 		if (s != NULL && s->flag & SYMBOL_PARAM) {
 			spill_reg(s);
-			s->addr_des.in_reg = false;
+			s->addr_des.in_reg = false;	// restore a0 upon exit of bb
 		}
 		for (int i = 0; i < t->num_args; i++) {
 			Reg *r = vec_get(t->args, i);
@@ -510,23 +538,19 @@ void ir2mips(IR *t, bool end_of_bb)
 		}
 		break;
 	case IR_FUNC_DECL:
-		emitl("%s:", t->name);
+		is_main_func = streql(t->name, "main");
+		emitl(is_main_func ? "main:" : "f_%s:", t->name);
 		env = t->env;
 		//print_env(env);
 		reg_des_init();
 		alloc_local_var();
 		offset = OFF_FIRST_SAVED_REG;
-		if (!streql(t->name, "main")) {
+		if (!is_main_func)
 			emit("sw $ra, -4($fp)");
-			main_func = false;
-		}
-		else {
-			main_func = true;
-		}
 		for (int i = 0; i < reg_des->saved_reg->keys->len; i++) {
 			char *key = vec_get(reg_des->saved_reg->keys, i);
 			Symbol *s = map_get(reg_des->saved_reg, key);
-			if (!main_func)
+			if (!is_main_func)
 				emit("sw %s, %d($fp)", key, -offset);
 			offset += 4;
 		}
@@ -538,17 +562,17 @@ void ir2mips(IR *t, bool end_of_bb)
 		flush_temp_reg(FLUSH_GLOBAL | FLUSH_LOCAL | LOCAL_NOT_SPILL);
 		if (t->arg1)
 			emit("move $v0, %s", reg(t->arg1));
-		if (!main_func)
+		if (!is_main_func)
 			emit("lw $ra, -4($fp)");
 		for (int i = 0; i < reg_des->saved_reg->keys->len; i++) {
 			char *key = vec_get(reg_des->saved_reg->keys, i);
 			Symbol *s = map_get(reg_des->saved_reg, key);
-			if (!main_func)
+			if (!is_main_func)
 				emit("lw %s, %d($fp)", key, -offset);
 			offset += 4;
 		}
 		emit("addiu $sp, $sp, %d", offset + env->offset);
-		if (main_func) {
+		if (is_main_func) {
 			emit("li $v0, 10");
 			emit("syscall");
 		}
@@ -561,7 +585,7 @@ void ir2mips(IR *t, bool end_of_bb)
 		for (int i = 0; i < env->symbols->values->len; i++) {
 			Symbol *s = vec_get(env->symbols->values, i);
 			if ((s->flag & SYMBOL_PARAM)) {
-				s->addr_des.in_mem = false;	// forced???
+				//s->addr_des.in_mem = false;	// forced???
 				spill_reg(s);
 			}
 		}
@@ -599,7 +623,7 @@ void ir2mips(IR *t, bool end_of_bb)
 
 		emit("sw $fp, -4($sp)");
 		emit("addi $fp, $sp, -4");
-		emit("jal %s", t->name);
+		emit("jal f_%s", t->name);
 		emit("lw $fp, 0($fp)");
 
 		if (t->num_args > 0)
@@ -609,7 +633,7 @@ void ir2mips(IR *t, bool end_of_bb)
 			Symbol *s = vec_get(env->symbols->values, i);
 			if ((s->flag & SYMBOL_PARAM) && s->addr_des.reg_num != 0) {
 				s->addr_des.in_reg = false;
-				load_reg(s->addr_des.reg_num, s);
+				//load_reg(s->addr_des.reg_num, s);
 			}
 		}
 
@@ -621,15 +645,18 @@ void ir2mips(IR *t, bool end_of_bb)
 		break;
 	}
 
-	if (end_of_bb)
+	if (end_of_bb && t->op != IR_RETURN) {
 		flush_temp_reg(FLUSH_GLOBAL | FLUSH_LOCAL);
+		params_clean_up_at_end_of_bb();
+	}
 
 	reg_des_unbind(REG_T8);
 	reg_des_unbind(REG_T9);
 }
 
-void emit_data(BB *global_vars) {
+static void emit_data(BB *global_vars) {
 	extern String_Table string_table;
+	emitl(".globl main");
 	emitl(".data");
 	emit("newline: .asciiz \"\\n\"");
 	for (int i = 0; i < string_table.strings->len; i++) {
@@ -641,25 +668,27 @@ void emit_data(BB *global_vars) {
 		Symbol *s = t->result->symbol;
 		if (t->arg1) {
 			// constant
-			emit("%s: .word %d", s->name, t->arg1->value);
+			emit("g_%s: .word %d", s->name, t->arg1->value);
 		}
 		else if (s->type->type == TYPE_ARRAY) {
-			emit("%s: .word 0:%d", s->name, s->type->len);
+			emit("g_%s: .word 0:%d", s->name, s->type->len);
 		}
 		else if (s->type->type == TYPE_INT || s->type->type == TYPE_CHAR) {
-			emit("%s: .word 0", s->name);
+			emit("g_%s: .word 0", s->name);
 		}
 	}
 }
 
-void gen_mips(char *path, Vector *ir)
+void gen_mips(Program *prog, char *path, int flag)
 {
+	if (prog == NULL)
+		return;
 	fp = fopen(path, "w");
 	if (fp == NULL) {
-		fprintf(stderr, "Cannot open file %s.", path);
+		fprintf(stderr, "Cannot open file %s\n", path);
 		exit(-1);
 	}
-	Program *prog = partition_program(ir);
+	print_option = flag;
 	reg_des_init();
 	//basic_block_demo(prog);
 	emit_data(prog->global_vars);
@@ -669,14 +698,14 @@ void gen_mips(char *path, Vector *ir)
 		Vector *func = vec_get(prog->funcs, i);	// Vector of BB
 		for (int j = 0; j < func->len; j++) {
 			BB *bb = vec_get(func, j);
-			// printf("#BB begin:\n");
+			 printf("#BB begin:\n");
 			if (bb->label)
 				emitl("L%d:", bb->label);
 			for (int k = 0; k < bb->ir->len; k++) {
 				ir2mips(vec_get(bb->ir, k), k == bb->ir->len - 1);
 			}
 			IR *t = vec_get(bb->ir, bb->ir->len - 1);
-			// printf("#BB end\n\n");
+			 printf("#BB end\n\n");
 		}
 	}
 

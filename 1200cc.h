@@ -3,6 +3,9 @@
 #include <stdarg.h>
 #include "util.h"
 
+#define PRINT_TO_FILE 0x1
+#define PRINT_TO_CONSOLE 0x2
+
 // Tokens
 
 typedef struct {
@@ -67,6 +70,7 @@ void parser_demo(Token *s, Token *e, char *fmt, ...);
 typedef struct Type Type;
 typedef struct Type{
 	int type;		// type can have value TYPE_INT, TYPE_ARRAY, etc.
+	char *name;		// for int or char only.
 	int size;		// size of this type.
 
 	// if type == TYPE_ARRAY, array_of is Type of the element of this array.
@@ -146,7 +150,7 @@ typedef struct {
 typedef struct Node Node;
 typedef struct Node {
 	int nd_type;		// type of this Node, can have the value ND_IF, ND_STMT, etc.
-	Type *id_type;
+	//Type *id_type;
 
 	/* ND_EXPR: op is the operator, left is left operand, right is right operand.
 	 * operands can be of type ND_EXPR, ND_ID, ND_NUML, ND_FUNC_CALL
@@ -158,6 +162,7 @@ typedef struct Node {
 	Token *op;
 	Node *left;			// left-hand side
 	Node *right;		// right-hand side
+	bool with_paren;
 
 	int value;			// signed integer or char for constant
 	char *string;		// for printf stmt
@@ -339,11 +344,13 @@ typedef struct {
 Program_AST *new_program();
 Program_AST * parse(Vector *_tokens);
 Vector * gen_ir(Program_AST *prog);
-void ir_demo(Vector *ir);
-void basic_block_demo(Program *prog);
+void ir_demo(Vector *ir, char * path, int print_option);
+void basic_block_demo(Program *prog, char *path);
 Program * partition_program(Vector *ir);
-void gen_mips(char *path, Vector *ir);
+void gen_mips(Program *prog, char *path, int flag);
 // error.c
 void errorf(Token *t, char *fmt, ...);
 char *type2string(int type);
 char *type2str(int type);
+
+void optimization(Program * prog);

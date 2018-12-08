@@ -232,13 +232,20 @@ static void print_ir(FILE *fp, IR *t)
 	}
 }
 
-void ir_demo(Vector *ir)
+void ir_demo(Vector *ir, char * path, int print_option)
 {
-	FILE *fp = stdout;
 	IR *t;
+	FILE *fp = fopen(path, "w");
+	if (fp == NULL) {
+		fprintf(stderr, "Cannot open file %s.\n", path);
+		exit(-1);
+	}
 	for (int i = 0; i < ir->len; i++) {
 		t = vec_get(ir, i);
-		print_ir(fp, t);
+		if (print_option & PRINT_TO_CONSOLE)
+			print_ir(stdout, t);
+		if (print_option & PRINT_TO_FILE)
+			print_ir(fp, t);
 	}
 }
 
@@ -253,10 +260,16 @@ static void print_basic_block(FILE *fp, BB *bb)
 	fprintf(fp, "+------------------+\nBB end\n\n");
 }
 
-void basic_block_demo(Program *prog)
+void basic_block_demo(Program *prog, char *path)
 {
+	if (prog == NULL)
+		return;
 	Vector *func_of_bb;
-	FILE *fp = stdout;
+	FILE *fp = fopen(path, "w");
+	if (fp == NULL) {
+		fprintf(stderr, "Cannot open file %s.\n", path);
+		exit(-1);
+	}
 	for (int i = 0; i < prog->funcs->len; i++) {
 		func_of_bb = vec_get(prog->funcs, i);
 		for (int j = 0; j < func_of_bb->len; j++)

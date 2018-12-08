@@ -17,6 +17,9 @@ static void merge_labels();
 
 Vector * gen_ir(Program_AST *prog)
 {
+	extern bool error_in_program;
+	if (error_in_program || prog == NULL)
+		return NULL;
 	ir = new_vec();
 	gen_const_or_var_decl(prog->const_decl);
 	gen_const_or_var_decl(prog->var_decl);

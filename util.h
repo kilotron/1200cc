@@ -13,6 +13,11 @@ typedef struct {
 	int len;		// number of elements in this vector.
 } Vector;
 
+typedef struct {
+	Vector *v;
+	int p;
+} Vector_Iterator;
+
 bool streql(char * s1, char * s2);
 bool startswith(char * s1, char * s2);
 
@@ -27,6 +32,10 @@ Vector *new_vec();
 void vec_put(Vector *v, void *elem);
 void vec_appendv(Vector * v1, Vector * v2);
 void *vec_get(Vector *v, int index);
+void vec_remove(Vector * v, int index);
+Vector_Iterator * vec_itr(Vector * v);
+bool vec_has_next(Vector_Iterator * itr);
+void * vec_next(Vector_Iterator * itr);
 
 // Map is a struct that maps strings(keys) to values(pointers). 
 // A map cannot contain duplicate keys; each key can map to at most one value.
@@ -34,8 +43,6 @@ typedef struct {
 	Vector *keys;
 	Vector *values;
 } Map;
-
-void vec_remove(Vector * v, int index);
 
 Map *new_map();
 void map_put(Map *map, char *key, void *value);
