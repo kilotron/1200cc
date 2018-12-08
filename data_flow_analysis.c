@@ -11,6 +11,8 @@ static BB *new_bb(int label)
 	bb->succ = new_vec();
 	bb->in_regs = new_vec();
 	bb->out_regs = new_vec();
+	bb->def = new_vec();
+	bb->use = new_vec();
 	return bb;
 }
 
@@ -42,12 +44,12 @@ static void mark_leaders(Vector *ir, int start, int end)
 				if (t2->b_label == t->to_label)
 					t2->is_leader = true;
 			}
-		}/* I am not quite sure...
+		}/* I am not quite sure...*/
 		else if (t->op == IR_FUNC_CALL) {
 			// each procedure call starts a new basic block
 			t2 = vec_get(ir, j + 1);
 			t2->is_leader = true;
-		}*/
+		}
 	}
 }
 
@@ -143,3 +145,191 @@ Program * partition_program(Vector *ir)
 
 	return prog;
 }
+
+/* Pre-conditions: label has a corresponding BB in func_of_bb.
+   Post-conditions: returns the corresponding BB*. */
+BB *label2BB(Vector *func_of_bb, int label)
+{
+	BB *bb;
+	for (int i = 0; i < func_of_bb->len; i++) {
+		bb = vec_get(func_of_bb, i);
+		if (bb->label == label)
+			return bb;
+	}
+	return NULL;
+}
+
+void get_pred_and_succ_of_bb(Program *prog)
+{
+	Vector *func_of_bb;
+	BB *bb1, *bb2, *to_bb;
+	IR *last_ir;
+	for (int i = 0; i < prog->funcs->len; i++) {
+		func_of_bb = vec_get(prog->funcs, i);
+		for (int j = 0; j < func_of_bb->len; j++) {
+			bb1 = vec_get(func_of_bb, j);
+			bb2 = vec_get(func_of_bb, j + 1);
+			last_ir = vec_get(bb1->ir, bb1->ir->len - 1);
+			if (last_ir == NULL)
+				continue;	// empty BB
+			switch (last_ir->op) {
+			case IR_LS: case IR_LE: case IR_GT: case IR_GE: case IR_NE:
+			case IR_EQ: case IR_EXPR_BRANCH:	// conditional branch
+				if (bb2 != NULL) {
+					vec_put(bb1->succ, bb2);
+					vec_put(bb2->pred, bb1);
+				}	// no break here	
+			case IR_GOTO:	// unconditional branch
+				to_bb = label2BB(func_of_bb, last_ir->to_label);
+				vec_put(bb1->succ, to_bb);
+				vec_put(to_bb->pred, bb1);
+				break;
+			default:
+				if (bb2 != NULL) {
+					vec_put(bb1->succ, bb2);
+					vec_put(bb2->pred, bb1);
+				}
+				break;
+			}
+		}
+	}
+}
+
+void get_def_use_of_bb(BB *bb)
+{
+	IR *t;
+	for (int i = 0; i < bb->ir->len; i++) {
+		t = vec_get(bb->ir, i);
+		switch (t->op) {
+		case IR_ASSIGN: case IR_TIMES: case IR_DIV: case IR_ADD: case IR_SUB:
+		case IR_LS: case IR_LE: case IR_GT: case IR_GE: case IR_EQ: case IR_NE:
+		case IR_EXPR_BRANCH: case IR_RETURN: case IR_WRITE: case IR_ASSIGN_ARR:
+		case IR_ARR_ACCESS:
+			if (t->arg1 && t->arg1->symbol && !vec_is_in(vec_union(bb->use, bb->def), t->arg1->symbol))
+				vec_put(bb->use, t->arg1->symbol);
+			if (t->arg2 && t->arg2->symbol && !vec_is_in(vec_union(bb->use, bb->def), t->arg2->symbol))
+				vec_put(bb->use, t->arg2->symbol);
+			if (t->result && !vec_is_in(vec_union(bb->use, bb->def), t->result->symbol))
+				vec_put(bb->def, t->result->symbol);
+			break;
+		case IR_FUNC_CALL:
+			if (t->args)
+				for (int i = 0; i < t->num_args; i++) {
+					Reg *arg = vec_get(t->args, i);
+					if (arg->symbol && !vec_is_in(vec_union(bb->use, bb->def), arg->symbol))
+						vec_put(bb->use, arg->symbol);
+				}
+			if (t->result && !vec_is_in(vec_union(bb->use, bb->def), t->result->symbol))
+				vec_put(bb->def, t->result->symbol);
+			break;
+		case IR_READ:
+			for (int i = 0; i < t->num_args; i++) {
+				Reg *arg = vec_get(t->args, i);
+				if (arg->symbol && !vec_is_in(vec_union(bb->use, bb->def), arg->symbol))
+					vec_put(bb->def, arg->symbol);
+			}
+			break;
+		case IR_DECL:	// ³£Á¿
+			if (t->arg1 && !vec_is_in(vec_union(bb->use, bb->def), t->result->symbol)) {
+				vec_put(bb->def, t->result->symbol);
+			}
+			break;
+		} // default: IR_LABEL, IR_GOTO, IR_FUNC_DECL
+	}
+}
+
+void use_def_of_prog(Program *prog)
+{
+	for (int i = 0; i < prog->funcs->len; i++) {
+		Vector *func_of_bb = vec_get(prog->funcs, i);
+		for (int j = 0; j < func_of_bb->len; j++) {
+			BB *bb = vec_get(func_of_bb, j);
+			get_def_use_of_bb(bb);
+		}
+	}
+}
+
+void liveness_of_prog(Program *prog)
+{
+	Vector *func_of_bb;
+	BB *bb, *succ_of_bb;
+	Vector *in_regs_prev;
+	bool in_regs_changed;
+	for (int i = 0; i < prog->funcs->len; i++) {
+		func_of_bb = vec_get(prog->funcs, i);
+		in_regs_changed = true;
+		while (in_regs_changed) {
+			in_regs_changed = false;
+			for (int j = func_of_bb->len - 1; j >= 0; j--) {
+				bb = vec_get(func_of_bb, j);
+				bb->out_regs = new_vec();
+				for (int k = 0; k < bb->succ->len; k++) {
+					succ_of_bb = vec_get(bb->succ, k);
+					bb->out_regs = vec_union(bb->out_regs, succ_of_bb->in_regs);
+				}
+				in_regs_prev = bb->in_regs;
+				bb->in_regs = vec_union(bb->use, vec_except(bb->out_regs, bb->def));
+				if (vec_is_different(bb->in_regs, in_regs_prev))
+					in_regs_changed = true;
+				//print_regs_of_bb(bb, PRINT_DEF | PRINT_USE | PRINT_IN_REGS | PRINT_OUT_REGS);
+			}
+		}
+	}
+}
+
+void print_regs_of_bb(BB *bb, int print_option)
+{
+	FILE *fp = stdout;
+	Symbol *s;
+	static int cnt = 0;
+	fprintf(fp, "\nBB%d begin: ", ++cnt);
+	if (bb->label)
+		fprintf(fp, "L%d ", bb->label);
+	fprintf(fp, "\n+------------------+\n");
+
+	if (print_option & PRINT_USE) {
+		fprintf(fp, "use:\n");
+		for (int i = 0; i < bb->use->len; i++) {
+			s = vec_get(bb->use, i);
+			fprintf(fp, "%5s ", s->name);
+		}
+		fprintf(fp, "\n");
+	}
+
+	if (print_option & PRINT_DEF) {
+		fprintf(fp, "\ndef:\n");
+		for (int i = 0; i < bb->def->len; i++) {
+			s = vec_get(bb->def, i);
+			fprintf(fp, "%5s ", s->name);
+		}
+		fprintf(fp, "\n");
+	}
+
+	if (print_option & PRINT_IN_REGS) {
+		fprintf(fp, "\nin_regs:\n");
+		for (int i = 0; i < bb->in_regs->len; i++) {
+			s = vec_get(bb->in_regs, i);
+			fprintf(fp, "%5s ", s->name);
+		}
+		fprintf(fp, "\n");
+	}
+
+	if (print_option & PRINT_OUT_REGS) {
+		fprintf(fp, "\nout_regs:\n");
+		for (int i = 0; i < bb->out_regs->len; i++) {
+			s = vec_get(bb->out_regs, i);
+			fprintf(fp, "%5s ", s->name);
+		}
+		fprintf(fp, "\n");
+	}	
+	
+	fprintf(fp, "\n+------------------+\nBB end\n\n");
+}
+
+void data_flow_analysis(Program *prog)
+{
+	get_pred_and_succ_of_bb(prog);
+	use_def_of_prog(prog);
+	liveness_of_prog(prog);
+}
+

@@ -6,6 +6,12 @@
 #define PRINT_TO_FILE 0x1
 #define PRINT_TO_CONSOLE 0x2
 
+#define PRINT_IN_REGS 0x1
+#define PRINT_OUT_REGS 0x2
+#define PRINT_USE 0x4
+#define PRINT_DEF 0x8
+
+
 // Tokens
 
 typedef struct {
@@ -331,10 +337,12 @@ typedef struct {
 typedef struct {
 	int label;
 	Vector *ir;
-	Vector *pred;	// predcessor
+	Vector *pred;	// predcessor, vec of BB*
 	Vector *succ;	// successor
 	Vector *in_regs;
 	Vector *out_regs;
+	Vector *def;	// vec of Symbol*
+	Vector *use;
 } BB;
 
 typedef struct {
@@ -356,3 +364,5 @@ char *type2string(int type);
 char *type2str(int type);
 
 void optimization(Program * prog);
+void data_flow_analysis(Program *prog);
+void print_regs_of_bb(BB *bb, int print_option);

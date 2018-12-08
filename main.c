@@ -19,7 +19,7 @@ int main()
 		prog = partition_program(ir);
 		//basic_block_demo(prog, "basic_block_orig.txt");
 		optimization(prog);
-		//basic_block_demo(prog, "basic_block_optd.txt");
+		basic_block_demo(prog, "basic_block_optd.txt");
 		//gen_mips(prog, "test_mips.asm", PRINT_TO_CONSOLE | PRINT_TO_FILE);
 		//gen_mips(prog, "test_mips.asm", PRINT_TO_CONSOLE);
 		gen_mips(prog, target_path, PRINT_TO_FILE);

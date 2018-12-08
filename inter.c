@@ -44,6 +44,7 @@ static Reg *new_reg(int type)
 	if (type == REG_TEMP) {
 		r->vn = n_regs++;
 		symbol = calloc(1, sizeof(Symbol));
+		symbol->name = stringf("#t%d", r->vn);
 		symbol->flag = SYMBOL_LOCAL | SYMBOL_TEMP;
 		symbol->type = new_type(TYPE_INT);
 		symbol->offset = top->offset;

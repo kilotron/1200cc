@@ -251,7 +251,8 @@ void ir_demo(Vector *ir, char * path, int print_option)
 
 static void print_basic_block(FILE *fp, BB *bb)
 {
-	fprintf(fp, "\nBB begin: ");
+	static int cnt = 0;
+	fprintf(fp, "\nBB%d begin: ", ++cnt);
 	if (bb->label)
 		fprintf(fp, "L%d", bb->label);
 	fprintf(fp, "\n+------------------+\n");

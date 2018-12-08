@@ -96,6 +96,55 @@ void vec_remove(Vector *v, int index)
 	v->len--;
 }
 
+bool vec_is_in(Vector *v, void *elem)
+{
+	for (int i = 0; i < v->len; i++) {
+		if (v->data[i] == elem)
+			return true;
+	}
+	return false;
+}
+
+/* Behaves as if it's a set.*/
+Vector *vec_union(Vector *v1, Vector *v2)
+{
+	Vector *v = new_vec();
+	void *elem;
+	for (int i = 0; i < v1->len; i++) {
+		vec_put(v, v1->data[i]);
+	}
+	for (int i = 0; i < v2->len; i++) {
+		elem = v2->data[i];
+		if (!vec_is_in(v, elem))
+			vec_put(v, elem);
+	}
+	return v;
+}
+
+/* v1 - v2 */
+Vector *vec_except(Vector *v1, Vector *v2)
+{
+	Vector *v = new_vec();
+	for (int i = 0; i < v1->len; i++) {
+		if (!vec_is_in(v2, v1->data[i]))
+			vec_put(v, v1->data[i]);
+	}
+	return v;
+}
+
+/* Pre-conditions: No duplicates in v1 or v2.
+Examine every element of v1 and v2 and see if the two are exactly the same. */
+bool vec_is_different(Vector *v1, Vector *v2)
+{
+	if (v1->len != v2->len)
+		return true;
+	for (int i = 0; i < v1->len; i++) {
+		if (!vec_is_in(v2, v1->data[i]))
+			return true;
+	}
+	return false;
+}
+
 Vector_Iterator * vec_itr(Vector * v)
 {
 	Vector_Iterator * itr = calloc(1, sizeof(Vector_Iterator));
