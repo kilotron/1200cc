@@ -54,8 +54,7 @@ char *type2str(int type)
 	return "BAD_TOKEN";
 }
 
-/* Pre-conditions: t != NULL, buf <= t->p < buf + file_size. */
-void errorf(Token *t, char *fmt, ...)
+static void error_msg(bool is_fatal, Token *t, const char *fmt, va_list _ArgList)
 {
 	int line = 1;
 	int col = 0;
@@ -74,11 +73,9 @@ void errorf(Token *t, char *fmt, ...)
 		}
 	}
 
-	fprintf(stderr, "%s:%d:%d: error: ", src->path, line, col);
-	va_list va;
-	va_start(va, fmt);
-	vfprintf(stderr, fmt, va);
-	va_end(va);
+	fprintf(stderr, "%s:%d:%d: %s: ", src->path, line, col, 
+		is_fatal ? "error" : "warning");
+	vfprintf(stderr, fmt, _ArgList);
 
 	// print out the line containing the error position.
 	int len = strchr(start, '\n') - start;
@@ -86,4 +83,21 @@ void errorf(Token *t, char *fmt, ...)
 	for (int i = 0; i < col - 1; i++)
 		fprintf(stderr, (start[i] == '\t') ? "\t" : " ");
 	fprintf(stderr, "^\n");
+}
+
+/* Pre-conditions: t != NULL, buf <= t->p < buf + file_size. */
+void errorf(Token *t, const char *fmt, ...)
+{
+	va_list va;
+	va_start(va, fmt);
+	error_msg(true, t, fmt, va);
+	va_end(va);
+}
+
+void warningf(Token *t, const char *fmt, ...)
+{
+	va_list va;
+	va_start(va, fmt);
+	error_msg(false, t, fmt, va);
+	va_end(va);
 }

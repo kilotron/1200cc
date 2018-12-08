@@ -263,9 +263,12 @@ static void skip_to_end_of_block_or_stmt()
 				move();
 				return;
 			}
-		case '{':
+		case '{': case '(':
 			// roughly tracking matching symbol
 			nesting_depth++;
+			break;
+		case ')':
+			nesting_depth--;
 			break;
 		}
 
@@ -997,10 +1000,10 @@ static Node * condition()
 	if (right != NULL) {
 		right_type = type_of_expr(right);
 		if (left_type->type != TYPE_INT || right_type->type != TYPE_INT)
-			errorf(start, "'int' type expected");
+			warningf(start, "type 'int' expected");
 	}
 	else if (left_type->type != TYPE_INT) {
-		errorf(start, "'int' type expected");
+		warningf(start, "type 'int' expected");
 	}
 
 	
@@ -1139,7 +1142,7 @@ static args_list_type_checking(Vector *arg_list, Vector *param_list, Symbol *fun
 			arg_t = type_of_expr(arg);
 			param_t = ((Node *)(vec_get(param_list, i)))->symbol->type;
 			if (arg_t->type != param_t->type) {
-				errorf(arg->token, "implicit conversion from '%s' to '%s'",
+				warningf(arg->token, "implicit conversion from '%s' to '%s'",
 					arg_t->name, param_t->name);
 			}
 		}
@@ -1275,7 +1278,7 @@ static Node * assign_stmt()
 
 	rhs_type = type_of_expr(rhs);
 	if (!error && lhs_type->type != rhs_type->type)
-		errorf(start, "implicit conversion from '%s' to '%s'", 
+		warningf(start, "implicit conversion from '%s' to '%s'", 
 			rhs_type->name, lhs_type->name);
 
 	parser_demo(start, look_prev, "<¸³ÖµÓï¾ä>");
@@ -1371,7 +1374,7 @@ static Node * return_stmt()
 			SEMANTIC_ERROR(error_in_program);
 		}
 		else if (current_func->type->ret->type != expr_type->type) {
-			errorf(e->token, "implicit conversion from '%s' to '%s'",
+			warningf(e->token, "implicit conversion from '%s' to '%s'",
 				expr_type->name, current_func->type->ret->name);
 		}
 	}

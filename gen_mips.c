@@ -283,7 +283,9 @@ static void params_clean_up_at_end_of_bb()
 	Symbol *s;
 	for (int i = 0; i < env->symbols->values->len; i++) {
 		s = vec_get(env->symbols->values, i);
-		if (s->flag & SYMBOL_PARAM) {
+		if (s->flag & SYMBOL_PARAM 
+				&& s->addr_des.reg_num >= REG_A0
+				&& s->addr_des.reg_num <= REG_A3) {
 			load_reg(s->addr_des.reg_num, s);
 			s->addr_des.in_mem = false;
 		}
@@ -386,13 +388,13 @@ static void ir2mips(IR *t, bool end_of_bb)
 	Symbol *s;
 
 	// special case, deal with regs on its own
-	if (!eq_oneof(4, t->op, IR_FUNC_CALL, IR_DECL, IR_FUNC_DECL, IR_ASSIGN_ARR))
+	if (!eq_oneof(6, t->op, IR_FUNC_CALL, IR_DECL, IR_FUNC_DECL, IR_ASSIGN_ARR, IR_WRITE, IR_READ))
 		get_reg(t);
 
 	// after get_reg(), do this before jumping
 	if (eq_oneof(8, t->op, IR_LS, IR_GT, IR_EQ, IR_NE, IR_LE, IR_GE, IR_EXPR_BRANCH, IR_GOTO)) {
-		flush_temp_reg(FLUSH_LOCAL | FLUSH_GLOBAL);
 		params_clean_up_at_end_of_bb();
+		flush_temp_reg(FLUSH_LOCAL | FLUSH_GLOBAL);
 	}
 	
 	switch (t->op) {
@@ -646,8 +648,8 @@ static void ir2mips(IR *t, bool end_of_bb)
 	}
 
 	if (end_of_bb && t->op != IR_RETURN) {
-		flush_temp_reg(FLUSH_GLOBAL | FLUSH_LOCAL);
 		params_clean_up_at_end_of_bb();
+		flush_temp_reg(FLUSH_GLOBAL | FLUSH_LOCAL);
 	}
 
 	reg_des_unbind(REG_T8);
@@ -698,14 +700,16 @@ void gen_mips(Program *prog, char *path, int flag)
 		Vector *func = vec_get(prog->funcs, i);	// Vector of BB
 		for (int j = 0; j < func->len; j++) {
 			BB *bb = vec_get(func, j);
-			 printf("#BB begin:\n");
+			if (flag & PRINT_TO_CONSOLE)
+				printf("#BB begin:\n");
 			if (bb->label)
 				emitl("L%d:", bb->label);
 			for (int k = 0; k < bb->ir->len; k++) {
 				ir2mips(vec_get(bb->ir, k), k == bb->ir->len - 1);
 			}
 			IR *t = vec_get(bb->ir, bb->ir->len - 1);
-			 printf("#BB end\n\n");
+			if (flag & PRINT_TO_CONSOLE)
+				printf("#BB end\n\n");
 		}
 	}
 

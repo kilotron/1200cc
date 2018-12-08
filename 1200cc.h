@@ -312,6 +312,7 @@ typedef struct {
 } Program_AST;
 
 #define REG_A0 4
+#define REG_A3 7
 #define REG_T0 8
 #define REG_T1 9
 #define REG_T2 10
@@ -349,7 +350,8 @@ void basic_block_demo(Program *prog, char *path);
 Program * partition_program(Vector *ir);
 void gen_mips(Program *prog, char *path, int flag);
 // error.c
-void errorf(Token *t, char *fmt, ...);
+void errorf(Token *t, const char *fmt, ...);
+void warningf(Token *t, const char *fmt, ...);
 char *type2string(int type);
 char *type2str(int type);
 
