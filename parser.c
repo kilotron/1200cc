@@ -560,7 +560,7 @@ static Vector *var_def(bool is_local)
 				goto error_in_var_def;
 			}
 
-			type_of_array->size = type_of_array->array_of->size * type_of_array->len;
+			type_of_array->size = WORD_SIZE * type_of_array->len;
 			
 			MATCH_OR_ERROR(']', error_in_var_def);
 			symbol = new_symbol(token->lexeme, type_of_array);
@@ -1473,6 +1473,39 @@ static Node * factor()
 			NOT_NULL_OR_ERROR(index, error_in_factor);
 			MATCH_OR_ERROR(']', error_in_factor);
 			node = new_array_access_node(symbol, index);
+			// 数组越界检查，
+			if (index->nd_type == ND_CHARL || index->nd_type == ND_NUML) {
+				int i = index->value;
+				int max = symbol->type->len;
+				if (i < 0 || i >= max) {
+					errorf(start, "index out of bounds");
+				}
+			}
+
+			if (index->nd_type == ND_ID && 
+				(index->symbol->type->type == TYPE_CONST_CHAR || index->symbol->type->type == TYPE_CONST_INT)) {
+				int i = index->symbol->value;
+				int max = symbol->type->len;
+				if (i < 0 || i >= max) {
+					errorf(start, "index out of bounds");
+				}
+			}
+
+			if (index->nd_type == ND_CHARL || index->nd_type == ND_NUML) {
+				int i = index->value;
+				int max = symbol->type->len;
+				if (i < 0 || i >= max) {
+					errorf(start, "index out of bound");
+				}
+			}
+
+			if (index->nd_type == ND_ID && (index->symbol->type->type == TYPE_CONST_INT || index->symbol->type->type == TYPE_CONST_CHAR)) {
+				int i = index->symbol->value;
+				int max = symbol->type->len;
+				if (i < 0 || i >= max) {
+					errorf(start, "index out of bound");
+				}
+			}
 		}
 		else if (symbol->type->type == TYPE_FUNC) {
 			if (symbol->type->ret == NULL) {
@@ -1514,13 +1547,14 @@ error_in_factor:
 // 需要修改
 static Type *type_of_expr(Node *e)
 {
-	if (!e->with_paren && (e->nd_type == ND_CHARL
-		|| (e->nd_type == ND_ARR_ACCESS
-			&& eq_oneof(2, e->symbol->type->array_of->type, TYPE_CHAR, TYPE_CONST_CHAR))
-		|| (e->nd_type == ND_ID
-			&& eq_oneof(2, e->symbol->type->type, TYPE_CHAR, TYPE_CONST_CHAR))
-		|| (e->nd_type == ND_FUNC_CALL
-			&& eq_oneof(2, e->symbol->type->ret->type, TYPE_CHAR, TYPE_CONST_CHAR))))
+	if (!e->with_paren && 
+		(
+			e->nd_type == ND_CHARL 
+		|| (e->nd_type == ND_ARR_ACCESS && eq_oneof(2, e->symbol->type->array_of->type, TYPE_CHAR, TYPE_CONST_CHAR))
+		|| (e->nd_type == ND_ID && eq_oneof(2, e->symbol->type->type, TYPE_CHAR, TYPE_CONST_CHAR))
+		|| (e->nd_type == ND_FUNC_CALL && eq_oneof(2, e->symbol->type->ret->type, TYPE_CHAR, TYPE_CONST_CHAR))
+		)
+		)
 		return new_type(TYPE_CHAR);
 	return new_type(TYPE_INT);
 }
@@ -1535,7 +1569,7 @@ Type *new_type(int type)
 		t->name = "int";
 		break;
 	case TYPE_CHAR: case TYPE_CONST_CHAR:
-		t->size = 1;
+		t->size = 4;
 		t->name = "char";
 		break;
 	}

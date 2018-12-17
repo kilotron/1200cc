@@ -1,6 +1,6 @@
 #include "util.h"
 
-bool streql(char *s1, char *s2)
+bool streql(const char * s1, const char * s2)
 {
 	while (*s1 != '\0' && *s2 != '\0') {
 		if (*s1++ != *s2++)
@@ -103,6 +103,12 @@ bool vec_is_in(Vector *v, void *elem)
 			return true;
 	}
 	return false;
+}
+
+void vec_put_if_not_in(Vector *v, void *elem)
+{
+	if (!vec_is_in(v, elem))
+		vec_put(v, elem);
 }
 
 /* Behaves as if it's a set.*/
@@ -330,7 +336,7 @@ bool eq_oneof(int num_vargs, int a, ...)
 }
 
 /* The length of string is less than 2048.*/
-char *stringf(char *fmt, ...)
+char *stringf(const char *fmt, ...)
 {
 	va_list va;
 	va_start(va, fmt);

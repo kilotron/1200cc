@@ -1,7 +1,5 @@
 #include "1200cc.h"
 
-// 已经写了基本块划分
-
 static BB *new_bb(int label)
 {
 	BB *bb = calloc(1, sizeof(BB));
@@ -44,7 +42,7 @@ static void mark_leaders(Vector *ir, int start, int end)
 				if (t2->b_label == t->to_label)
 					t2->is_leader = true;
 			}
-		}/* I am not quite sure...*/
+		}/* I am not quite sure... */
 		else if (t->op == IR_FUNC_CALL) {
 			// each procedure call starts a new basic block
 			t2 = vec_get(ir, j + 1);
@@ -116,6 +114,8 @@ Program * partition_program(Vector *ir)
 		vec_put(func_of_bb, bb);
 		t = vec_get(ir, i++);	// function declaration
 		vec_put(bb->ir, t);
+
+		// add declarations to the first bb of this function
 		while (i < ir->len) {
 			t = vec_get(ir, i);
 			if (t->op != IR_DECL)
@@ -195,7 +195,9 @@ void get_pred_and_succ_of_bb(Program *prog)
 	}
 }
 
-void get_def_use_of_bb(BB *bb)
+///// Beginning of live variable analysis
+
+static void compute_def_use_of_bb(BB *bb)
 {
 	IR *t;
 	for (int i = 0; i < bb->ir->len; i++) {
@@ -209,8 +211,12 @@ void get_def_use_of_bb(BB *bb)
 				vec_put(bb->use, t->arg1->symbol);
 			if (t->arg2 && t->arg2->symbol && !vec_is_in(vec_union(bb->use, bb->def), t->arg2->symbol))
 				vec_put(bb->use, t->arg2->symbol);
-			if (t->result && !vec_is_in(vec_union(bb->use, bb->def), t->result->symbol))
-				vec_put(bb->def, t->result->symbol);
+			if (t->result && !vec_is_in(vec_union(bb->use, bb->def), t->result->symbol)) {
+				if (t->op == IR_ASSIGN_ARR)
+					vec_put(bb->use, t->result->symbol);
+				else
+					vec_put(bb->def, t->result->symbol);
+			}
 			break;
 		case IR_FUNC_CALL:
 			if (t->args)
@@ -238,18 +244,19 @@ void get_def_use_of_bb(BB *bb)
 	}
 }
 
-void use_def_of_prog(Program *prog)
+static void compute_use_def(Program *prog)
 {
 	for (int i = 0; i < prog->funcs->len; i++) {
 		Vector *func_of_bb = vec_get(prog->funcs, i);
 		for (int j = 0; j < func_of_bb->len; j++) {
 			BB *bb = vec_get(func_of_bb, j);
-			get_def_use_of_bb(bb);
+			compute_def_use_of_bb(bb);
 		}
 	}
 }
 
-void liveness_of_prog(Program *prog)
+/* Pre-conditions: compute_use_def() has been called.*/
+static void live_variable_analysis(Program *prog)
 {
 	Vector *func_of_bb;
 	BB *bb, *succ_of_bb;
@@ -276,6 +283,109 @@ void liveness_of_prog(Program *prog)
 		}
 	}
 }
+
+///// End of live variable analysis
+
+///// Beginning of computing next-use information
+
+
+/* Mark all symbols in env as 'not live'. Mark symbols in out_regs as 'live'.
+   This function should be called before analysis of a basic block. */
+static void reset_env(Env *env, BB *globals, Vector *out_regs)
+{
+	Vector *symbols = env->symbols->values;
+	Symbol *s;
+	for (int i = 0; i < symbols->len; i++) {
+		s = vec_get(symbols, i);
+		if (vec_is_in(out_regs, s))
+			s->live = true;
+		else
+			s->live = false;
+	}
+	for (int i = 0; i < globals->ir->len; i++) {
+		IR *t = vec_get(globals->ir, i);
+		s = t->result->symbol;
+		if (vec_is_in(out_regs, s))
+			s->live = true;
+		else
+			s->live = false;
+	}
+}
+
+/* Reference:
+https://www2.cs.arizona.edu/~collberg/Teaching/453/2009/Handouts/Handout-21.pdf
+*/
+void get_next_use_info(Program *prog)
+{
+	Vector *func_of_bb;
+	Env *env;
+	BB *bb;
+	IR *t;
+
+	for (int i = 0; i < prog->funcs->len; i++) {
+		func_of_bb = vec_get(prog->funcs, i);
+		bb = vec_get(func_of_bb, 0);
+		t = vec_get(bb->ir, 0);	// the first ir of first bb is of type IR_FUNC_DECL
+		env = t->env;
+		for (int j = 0; j < func_of_bb->len; j++) {
+			bb = vec_get(func_of_bb, j);
+			reset_env(env, prog->global_vars, bb->out_regs);
+			for (int k = bb->ir->len - 1; k >= 0; k--) {
+				t = vec_get(bb->ir, k);
+				/* 1.Attach to statement t the information currently found in
+					the symbol table. If t->argi->symbol is NULL, t->argi is a literal.
+					A literal is not live.
+				   2.In the symbol table, update next-use information.*/
+				switch (t->op) {
+				case IR_FUNC_DECL: case IR_DECL: case IR_GOTO: case IR_LABEL:
+					break;	// do nothing
+				case IR_FUNC_CALL:
+					if (t->result) { // with ret value
+						if (t->result->symbol->live)
+							vec_put_if_not_in(t->next_use, t->result->symbol);
+						t->result->symbol->live = false;
+					}
+					for (int i = 0; i < t->num_args; i++) {
+						Reg *arg = vec_get(t->args, i);
+						if (arg->symbol) {	// symbol is NULL if arg is a literal
+							if (arg->symbol->live)
+								vec_put_if_not_in(t->next_use, arg->symbol);
+							arg->symbol->live = true;
+						}
+					}
+					break;
+				case IR_READ:
+					for (int i = 0; i < t->args->len; i++) {
+						Reg *arg = vec_get(t->args, i);
+						if (arg->symbol->live)
+							vec_put_if_not_in(t->next_use, arg->symbol);
+						arg->symbol->live = false;
+					}
+					break;
+				default:
+					if (t->result) {
+						if (t->result->symbol->live)
+							vec_put_if_not_in(t->next_use, t->result->symbol);
+						t->result->symbol->live = t->op == IR_ASSIGN_ARR ? true : false;
+					}
+					if (t->arg1 && t->arg1->symbol) {
+						if (t->arg1->symbol->live)
+							vec_put_if_not_in(t->next_use, t->arg1->symbol);
+						t->arg1->symbol->live = true;
+					}
+					if (t->arg2 && t->arg2->symbol) {
+						if (t->arg2->symbol->live)
+							vec_put_if_not_in(t->next_use, t->arg2->symbol);
+						t->arg2->symbol->live = true;
+					}
+					break;
+				}
+			}
+		}
+	}
+}
+
+///// End of computing next-use information
 
 void print_regs_of_bb(BB *bb, int print_option)
 {
@@ -329,7 +439,8 @@ void print_regs_of_bb(BB *bb, int print_option)
 void data_flow_analysis(Program *prog)
 {
 	get_pred_and_succ_of_bb(prog);
-	use_def_of_prog(prog);
-	liveness_of_prog(prog);
+	compute_use_def(prog);
+	live_variable_analysis(prog);
+	get_next_use_info(prog);
 }
 

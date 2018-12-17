@@ -40,6 +40,7 @@ static Reg *new_reg(int type)
 	Reg *r = calloc(1, sizeof(Reg));
 	Symbol *symbol;
 	r->type = type;
+	r->is_char = false;
 	/* allocate reg num only for temporary variables.  */
 	if (type == REG_TEMP) {
 		r->vn = n_regs++;
@@ -59,6 +60,7 @@ static IR * new_ir(int op) {
 	IR *i = calloc(1, sizeof(IR));
 	i->op = op;
 	i->is_leader = false;
+	i->next_use = new_vec();
 	return i;
 }
 
@@ -92,8 +94,14 @@ static Reg * gen_expr_arg(Node *node)
 	case ND_ID:
 		arg = new_reg(REG_VAR);
 		arg->symbol = node->symbol;
+		arg->is_char = eq_oneof(2, arg->symbol->type->type, TYPE_CHAR, TYPE_CONST_CHAR);
 		break;
-	case ND_NUML: case ND_CHARL:
+	case ND_CHARL:
+		arg = new_reg(REG_NUM);
+		arg->value = node->value;
+		arg->is_char = !node->with_paren;
+		break;
+	case ND_NUML: 
 		arg = new_reg(REG_NUM);
 		arg->value = node->value;
 		break;

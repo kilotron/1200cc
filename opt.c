@@ -37,7 +37,7 @@ void test(Program *prog)
 		Vector *func_of_bb = vec_get(prog->funcs, i);
 		for (int j = 0; j < func_of_bb->len; j++) {
 			BB *bb = vec_get(func_of_bb, j);
-			print_regs_of_bb(bb, PRINT_DEF | PRINT_USE | PRINT_IN_REGS | PRINT_OUT_REGS);
+			//print_regs_of_bb(bb, PRINT_DEF | PRINT_USE | PRINT_IN_REGS | PRINT_OUT_REGS);
 		}
 	}
 }
@@ -48,6 +48,6 @@ void optimization(Program * prog)
 		return;
 	merge_redundant_assignment(prog);
 	data_flow_analysis(prog);
-	test(prog);
+	//test(prog);
 }
 

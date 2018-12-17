@@ -18,7 +18,7 @@ typedef struct {
 	int p;
 } Vector_Iterator;
 
-bool streql(char * s1, char * s2);
+bool streql(const char * s1, const char * s2);
 bool startswith(char * s1, char * s2);
 
 bool is_alpha(char c);
@@ -34,6 +34,7 @@ void vec_appendv(Vector * v1, Vector * v2);
 void *vec_get(Vector *v, int index);
 void vec_remove(Vector * v, int index);
 bool vec_is_in(Vector * v, void * elem);
+void vec_put_if_not_in(Vector * v, void * elem);
 Vector * vec_union(Vector * v1, Vector * v2);
 Vector * vec_except(Vector * v1, Vector * v2);
 bool vec_is_different(Vector * v1, Vector * v2);
@@ -92,6 +93,6 @@ TypeSet *typeset_union(TypeSet *t1, TypeSet *t2);
 
 bool eq_oneof(int num_vargs, int a, ...);
 
-char * stringf(char * fmt, ...);
+char * stringf(const char * fmt, ...);
 
 

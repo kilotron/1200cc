@@ -119,7 +119,7 @@ static char *reg_tostr(Reg *reg)
 	return buf;
 }
 
-static void print_ir(FILE *fp, IR *t)
+void print_ir(FILE *fp, IR *t)
 {
 	Symbol *s;
 	switch (t->op) {
@@ -256,8 +256,24 @@ static void print_basic_block(FILE *fp, BB *bb)
 	if (bb->label)
 		fprintf(fp, "L%d", bb->label);
 	fprintf(fp, "\n+------------------+\n");
-	for (int i = 0; i < bb->ir->len; i++)
-		print_ir(fp, vec_get(bb->ir, i));
+	for (int i = 0; i < bb->ir->len; i++) {
+		IR *t = vec_get(bb->ir, i);
+		print_ir(fp, t);
+		if (eq_oneof(2, t->op, IR_FUNC_DECL, IR_DECL))
+			continue;
+		fprintf(fp, "next_use: ");
+		for (int i = 0; i < t->next_use->len; i++) {
+			Symbol *s = vec_get(t->next_use, i);
+			fprintf(fp, "%s, ", s->name);
+		}
+		fprintf(fp, "\n\n");
+	}
+	fprintf(fp, "out_regs:\n");
+	for (int i = 0; i < bb->out_regs->len; i++) {
+		Symbol *s = vec_get(bb->out_regs, i);
+		fprintf(fp, "%5s ", s->name);
+	}
+	fprintf(fp, "\n");
 	fprintf(fp, "+------------------+\nBB end\n\n");
 }
 

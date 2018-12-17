@@ -131,12 +131,10 @@ typedef struct {
 	char *name;
 	Type *type;
 	int offset;		// relative address
-	//bool is_local;	// is local variable
-	//bool is_temp;
-	//bool is_param;
 	int flag;
 	Addr_Des addr_des;
 	int value;		// for const
+	bool live;
 } Symbol;
 
 Symbol *new_symbol(char *name, Type *type);
@@ -245,9 +243,9 @@ Node * new_assignment_node(Node * lhs, Node * rhs);
 Node * new_func_decl_node(Symbol * func_id, Node * body, Env *env);
 
 enum {
-	REG_TEMP = 0,
+	REG_TEMP = 0, // temporary variable
 	REG_VAR = 1,
-	REG_NUM = 2
+	REG_NUM = 2	// constant
 };
 
 typedef struct {
@@ -256,6 +254,10 @@ typedef struct {
 	int rn;
 	Symbol *symbol;	// for variables
 	int value;		// for number
+	// REG_TEMP: false, REG_VAR: symbol->type, REG_NUM:default: false
+	// to keep track of the type of a (temporary) variable or literal
+	// used in a print statement, may not be consistent elsewhere.
+	bool is_char;
 } Reg;
 
 // intermediate representation
@@ -308,6 +310,7 @@ typedef struct {
 	int string_label;
 
 	bool is_leader;	// for partitioning bb
+	Vector *next_use;	// next-use symbols
 } IR;
 
 typedef struct {
@@ -339,7 +342,7 @@ typedef struct {
 	Vector *ir;
 	Vector *pred;	// predcessor, vec of BB*
 	Vector *succ;	// successor
-	Vector *in_regs;
+	Vector *in_regs;// vec of Symbol*
 	Vector *out_regs;
 	Vector *def;	// vec of Symbol*
 	Vector *use;
@@ -366,3 +369,4 @@ char *type2str(int type);
 void optimization(Program * prog);
 void data_flow_analysis(Program *prog);
 void print_regs_of_bb(BB *bb, int print_option);
+void print_ir(FILE *fp, IR *t);

@@ -3,7 +3,13 @@
 #define FLUSH_LOCAL 0x1
 #define FLUSH_GLOBAL 0x2
 #define LOCAL_NOT_SPILL 0x4
-//Program *prog;
+
+#define SPILL_LOCAL 0x1
+#define SPILL_PARAM 0x2
+#define SPILL_GLOBAL 0x4
+#define SPILL_ALL (SPILL_LOCAL | SPILL_PARAM | SPILL_GLOBAL)
+
+// is_constant(Reg *r, int *value);
 
 static int offset_of_first_var_in_stack_from_fp;	// always non-negative.
 static int spill = REG_T0;	// temporary register to spill
@@ -19,6 +25,7 @@ char *name[] = {
 Reg_Des *reg_des;
 Env *env;			// to access symbols
 bool is_main_func = false;
+bool is_leaf;		// to keep track of function calls
 
 static void print_env(Env *env)
 {
@@ -84,6 +91,11 @@ static void reg_des_bind(int reg_num, Symbol *s)
 static void reg_des_unbind(int reg_num)
 {
 	map_put(reg_des->temp_reg, name[reg_num], NULL);
+}
+
+static bool is_temp_reg(int reg_num)
+{
+	return (reg_num >= REG_T0 && reg_num <= REG_T7) || reg_num == REG_T8 || reg_num == REG_T9;
 }
 
 /* Pre-conditions: symbol != NULL. 
@@ -159,32 +171,37 @@ static void load_reg(int reg_num, Symbol *symbol)
 /* If symbol s is variable int or char(not array or constant),
    s is in a register and has newest value in
    register but not in memory, write it back to memory. */
-static void spill_reg(Symbol *s)
+static void spill_reg(Symbol *s, int flag)
 {
 	if (s != NULL && (s->type->type == TYPE_INT || s->type->type == TYPE_CHAR)
 		&& s->addr_des.reg_num && !s->addr_des.in_mem && s->addr_des.in_reg) {
 
 		if (s->flag & SYMBOL_PARAM) {
-			emit("sw %s, %d($fp)", name[s->addr_des.reg_num], s->offset + WORD_SIZE);
+			if (flag & SPILL_PARAM)
+				emit("sw %s, %d($fp)", name[s->addr_des.reg_num], s->offset + WORD_SIZE);
 		}
 		else if (s->flag & SYMBOL_LOCAL) {
-			emit("sw %s, %d($fp)", name[s->addr_des.reg_num],
-				offset_of_first_var_in_stack_from_fp - s->offset);
+			if (flag & SPILL_LOCAL)
+				emit("sw %s, %d($fp)", name[s->addr_des.reg_num],
+					offset_of_first_var_in_stack_from_fp - s->offset);
 		}
 		else {	// global
-			emit("sw %s, g_%s($zero)", name[s->addr_des.reg_num], s->name);
+			if (flag & SPILL_GLOBAL)
+				emit("sw %s, g_%s($zero)", name[s->addr_des.reg_num], s->name);
 		}
 
 		s->addr_des.in_mem = true;
 	}
 }
 
-/* If reg reg_num is free, allocates it to symbol, 
-   and returns true else returns false.
+/* If reg reg_num is not live(not in vector live), frees it. If reg reg_num is free,
+   allocates it to symbol, and returns true else returns false.
    Update register descriptor and address descriptor if allocated successfully.*/
 static bool alloc_if_free(int reg_num, Symbol *symbol)
 {
-	if (map_get(reg_des->temp_reg, name[reg_num]) == NULL) {
+	Symbol *s_prev = map_get(reg_des->temp_reg, name[reg_num]);
+	
+	if (s_prev == NULL) { // free
 		reg_des_bind(reg_num, symbol);
 		symbol->addr_des.reg_num = reg_num;
 		return true;
@@ -203,7 +220,7 @@ static void alloc_forced(int reg_num, Symbol *symbol)
 	Symbol *s = map_get(reg_des->temp_reg, name[reg_num]);
 
 	if (s != NULL) {
-		spill_reg(s);
+		spill_reg(s, SPILL_ALL);
 		s->addr_des.in_reg = false;
 		s->addr_des.reg_num = 0;
 	}
@@ -212,10 +229,54 @@ static void alloc_forced(int reg_num, Symbol *symbol)
 	symbol->addr_des.reg_num = reg_num;
 }
 
-/**/
-static void get_rhs_reg(Reg *r)
+/* Free register that is allocated to symbol. The register is REG_T0 ~ REG_T9.
+   Freeing saved register will be supported in future.
+    */
+static void unalloc(Symbol *symbol)
+{
+	int reg_num = symbol->addr_des.reg_num;
+	if (!is_temp_reg(reg_num))
+		return;
+	symbol->addr_des.in_reg = false;
+	symbol->addr_des.reg_num = 0;
+	reg_des_unbind(reg_num);
+}
+
+/* If next-use information has been computed, makes use of it to manage register 
+   allocation. If a variable has no next-use we can reuse the register allocated
+   to the variable.
+   Note that globals should not be unallocated without writing it back to
+   memory.
+   Reference:
+   https://www2.cs.arizona.edu/~collberg/Teaching/453/2009/Handouts/Handout-21.pdf
+   */
+static void free_no_next_use_reg(IR *t)
+{
+	extern bool live_variable_analysis_ON;
+	if (!live_variable_analysis_ON)
+		return;
+	if (t->result && !vec_is_in(t->next_use, t->result->symbol) 
+		&& (t->result->symbol->flag & SYMBOL_LOCAL))
+		unalloc(t->result->symbol);
+	if (t->arg1 && t->arg1->symbol && !vec_is_in(t->next_use, t->arg1->symbol)
+		&& (t->arg1->symbol->flag & SYMBOL_LOCAL))
+		unalloc(t->arg1->symbol);
+	if (t->arg2 && t->arg2->symbol && !vec_is_in(t->next_use, t->arg2->symbol)
+		&& (t->arg2->symbol->flag & SYMBOL_LOCAL))
+		unalloc(t->arg2->symbol);
+	for (int i = 0; i < t->num_args; i++) {
+		Symbol *s = vec_get(t->args, i);
+		if (!vec_is_in(t->next_use, s) && (s->flag & SYMBOL_LOCAL))
+			unalloc(s);
+	}
+}
+
+/* next-use information is used to free reg that is no longer used.*/
+static void get_rhs_reg(Reg *r, bool load_constant)
 {
 	if (r->type == REG_NUM) {
+		if (!load_constant)
+			return;
 		for (int i = REG_T8; i <= REG_T9; i++) {
 			if (map_get(reg_des->temp_reg, name[i]) == NULL) {
 				map_put(reg_des->temp_reg, name[i], (void *)1);	// temporary use
@@ -235,14 +296,15 @@ static void get_rhs_reg(Reg *r)
 	}
 
 	/* Attempt to find a free temporary register. If found, loads content from memory.*/
-	for (int i = REG_T0; i <= REG_T7; i++)
+	for (int i = REG_T0; i <= REG_T7; i++) {
 		if (alloc_if_free(i, r->symbol)) {
 			r->rn = i;
 			load_reg(r->rn, r->symbol);
 			return;
 		}
+	}
 
-	/* All temporary registers are in use. TODO: 改用好一点的方法。*/
+	/* All temporary registers are in use or live.*/
 	r->rn = spill;
 	alloc_forced(r->rn, r->symbol);
 	load_reg(r->rn, r->symbol);
@@ -273,23 +335,6 @@ static void get_lhs_reg(Reg *r)
 get_lhs_reg_exit:
 	r->symbol->addr_des.in_reg = true;
 	r->symbol->addr_des.in_mem = false;
-}
-
-/* Make sure that param 0-3 is in reg and not in memory, param n>3 is in mem
-   upon entry and exit of a basic block. This function should be called
-   at the end of a basic block. */
-static void params_clean_up_at_end_of_bb()
-{
-	Symbol *s;
-	for (int i = 0; i < env->symbols->values->len; i++) {
-		s = vec_get(env->symbols->values, i);
-		if (s->flag & SYMBOL_PARAM 
-				&& s->addr_des.reg_num >= REG_A0
-				&& s->addr_des.reg_num <= REG_A3) {
-			load_reg(s->addr_des.reg_num, s);
-			s->addr_des.in_mem = false;
-		}
-	}
 }
 
 /* var includes local variable and parameters in a function.
@@ -334,12 +379,12 @@ static void alloc_local_var()
 }
 
 /* Allocate temporary register for TAC t. */
-static void get_reg(IR *t)
+static void get_reg(IR *t, bool load_constant)
 {
 	if (t->arg1)
-		get_rhs_reg(t->arg1);
+		get_rhs_reg(t->arg1, load_constant);
 	if (t->arg2)
-		get_rhs_reg(t->arg2);
+		get_rhs_reg(t->arg2, load_constant);
 	if (t->result)
 		get_lhs_reg(t->result);
 }
@@ -354,15 +399,24 @@ static char *reg(Reg *r)
    newest value in register but not in memory). Those temporary registers
    are freed. The register descriptor and variable address descriptor are
    updated to keep in a consistent state.
+
+   If live-variable analysis has been done, we know whether a variable used
+   in a basic block is live-on-exit. If it is not live on exit, there is no
+   need to store values kept in register back into their memory locations.
+   Reference:
+   https://www2.cs.arizona.edu/~collberg/Teaching/453/2009/Handouts/Handout-21.pdf
+
    flag can be:
    FLUSH_LOCAL: Local variables(or constants) are unallocated.
    LOCAL_NOT_SPILL: Unallocate local variables without write it back to 
 					memory, this flag is valid when FLUSH_LOCAL is on.
-   FLUSH_GLOBAL: Global variables(or constants) are unallocated.*/
-static void flush_temp_reg(int flag)
+   FLUSH_GLOBAL: Global variables(or constants) are unallocated.
+   live只针对基本块出口活跃的局部变量，全局变量即使不活跃也要保存。*/
+static void flush_temp_reg(Vector *live, int flag)
 {
 	char *key;
 	Symbol *s;
+	extern bool live_variable_analysis_ON;
 	for (int i = 0; i < reg_des->temp_reg->keys->len; i++) {
 		key = vec_get(reg_des->temp_reg->keys, i);
 		s = map_get(reg_des->temp_reg, key);
@@ -372,115 +426,215 @@ static void flush_temp_reg(int flag)
 				|| (!(s->flag & SYMBOL_LOCAL) && !(flag & FLUSH_GLOBAL)))
 			continue;
 
-		if (!(s->flag & SYMBOL_LOCAL && flag & LOCAL_NOT_SPILL))
-			spill_reg(s);
-
+		if (s->flag & SYMBOL_LOCAL) {
+			if (!(flag & LOCAL_NOT_SPILL)) {
+				if (live_variable_analysis_ON) {
+					if (live && vec_is_in(live, s))
+						spill_reg(s, SPILL_ALL);
+				}
+				else {
+					spill_reg(s, SPILL_ALL);
+				}
+			}
+		}
+		else { // global
+			spill_reg(s, SPILL_ALL);
+		}
+		
 		reg_des_unbind(s->addr_des.reg_num);
 		s->addr_des.reg_num = 0;
 		s->addr_des.in_reg = false;
 	}
 }
 
+char *arith_instr(int ir_op, bool has_imm)
+{
+	switch (ir_op)
+	{
+	case IR_ADD: return has_imm ? "addiu" : "addu";
+	case IR_SUB: return has_imm ? "subiu" : "subu";
+	case IR_TIMES: return "mul";
+	case IR_DIV: return "div";
+	default: return NULL;
+	}
+}
 
-static void ir2mips(IR *t, bool end_of_bb)
+int arith_result(int ir_op, int arg1, int arg2)
+{
+	switch (ir_op)
+	{
+	case IR_ADD: return arg1 + arg2;
+	case IR_SUB: return arg1 - arg2;
+	case IR_TIMES: return arg1 * arg2;
+	case IR_DIV: return arg1 / arg2;
+	default: printf("error calling arith_result()\n"); return 0;
+	}
+}
+
+/* t->op is IR_ADD, IR_SUB, IR_TIMES, IR_DIV*/
+static void gen_arith(IR *t)
+{
+	get_reg(t, false);	// do not load constant
+	if (!t->arg2) {
+		if (t->arg1->type == REG_NUM)
+			emit("%s %s, $zero, %d", arith_instr(t->op, true), reg(t->result), t->arg1->value);
+		else
+			emit("%s %s, $zero, %s", arith_instr(t->op, false), reg(t->result), reg(t->arg1));
+		return;
+	}
+	// two operands
+	if (t->arg1->type == REG_NUM && t->arg2->type == REG_NUM) 
+		emit("li %s, %d", reg(t->result), arith_result(t->op, t->arg1->value, t->arg2->value));
+	else if (t->arg1->type == REG_NUM && t->arg2->type != REG_NUM) {
+		emit("%s %s, %s, %d", arith_instr(t->op, true), reg(t->result), reg(t->arg2), t->arg1->value);
+		if (t->op == IR_SUB)
+			emit("negu %s, %s", reg(t->result), reg(t->result));
+	}
+	else if (t->arg1->type != REG_NUM && t->arg2->type == REG_NUM) 
+		emit("%s %s, %s, %d", arith_instr(t->op, true), reg(t->result), reg(t->arg1), t->arg2->value);
+	else 
+		emit("%s %s, %s, %s", arith_instr(t->op, false), reg(t->result), reg(t->arg1), reg(t->arg2));
+}
+
+/* instr is blt, bgt, bge, ble*/
+static char *neg_branch(const char *instr, bool neg_both)
+{
+	if (streql(instr, "beq") || streql(instr, "bne")) {
+		if (neg_both)
+			return streql(instr, "beq") ? "bne" : "beq";
+		return stringf(instr);
+	}
+	char *p = stringf(instr);
+	p[1] = (p[1] == 'g') ? 'l' : 'g';
+	if (neg_both)
+		p[2] = (p[2] == 'e') ? 't' : 'e';
+	return p;
+}
+
+/* ir_op is one of IR_LS, IR_GT, IR_LE, IR_GE, IR_EQ, IR_NE */
+char *branch_instr(int ir_op, bool if_false, bool has_zero, bool imm_first)
+{
+	char *p;
+	switch (ir_op) {
+	case IR_LS: p = "blt"; break;
+	case IR_GT: p = "bgt"; break;
+	case IR_GE: p = "bge"; break;
+	case IR_LE: p = "ble"; break;
+	case IR_EQ: p = "beq"; break;
+	case IR_NE: p = "bne"; break;
+	default: return NULL;
+	}
+	if (imm_first)
+		p = neg_branch(p, false);
+	if (if_false)
+		p = neg_branch(p, true);
+	if (has_zero)
+		p = stringf("%sz", p);
+	return p;
+}
+
+/* ir_op is one of IR_LS, IR_GT, IR_LE, IR_GE, IR_EQ, IR_NE */
+static bool jump_directly(int ir_op, int arg1, int arg2, bool if_false)
+{
+	bool ls, gt, eq, ret = false;
+	ls = arg1 < arg2;
+	gt = arg1 > arg2;
+	eq = arg1 == arg2;
+	switch (ir_op) {
+	case IR_LS: ret = ls; break;
+	case IR_GT: ret = gt; break;
+	case IR_GE: ret = gt || eq; break;
+	case IR_LE: ret = ls || eq; break;
+	case IR_EQ: ret = eq; break;
+	case IR_NE: ret = !eq; break;
+	}
+	return if_false ? !ret : ret;
+}
+
+static void load_params_at_end_of_bb(Vector *live)
+{
+	Symbol *s;
+	for (int i = 0; i < env->symbols->values->len; i++) {
+		s = vec_get(env->symbols->values, i);
+		if (s->flag & SYMBOL_PARAM
+			&& s->addr_des.reg_num >= REG_A0
+			&& s->addr_des.reg_num <= REG_A3
+			&& vec_is_in(live, s)) {
+			load_reg(s->addr_des.reg_num, s);
+			s->addr_des.in_mem = false;
+		}
+	}
+}
+
+/* 1.Make sure that param 0-3 is in reg and not in memory, param n>3 is in mem
+   upon entry and exit of a basic block. This function should be called
+   at the end of a basic block.
+   2.Store values in temporary registers back into their memory locations.*/
+static void clean_up_at_end_of_bb(Vector *live)
+{
+	load_params_at_end_of_bb(live);
+	flush_temp_reg(live, FLUSH_LOCAL | FLUSH_GLOBAL);
+}
+
+static void ir2mips(IR *t, BB *bb, bool end_of_bb)
 {
 	int offset;
 	Symbol *s;
-
-	// special case, deal with regs on its own
-	if (!eq_oneof(6, t->op, IR_FUNC_CALL, IR_DECL, IR_FUNC_DECL, IR_ASSIGN_ARR, IR_WRITE, IR_READ))
-		get_reg(t);
-
-	// after get_reg(), do this before jumping
-	if (eq_oneof(8, t->op, IR_LS, IR_GT, IR_EQ, IR_NE, IR_LE, IR_GE, IR_EXPR_BRANCH, IR_GOTO)) {
-		params_clean_up_at_end_of_bb();
-		flush_temp_reg(FLUSH_LOCAL | FLUSH_GLOBAL);
-	}
 	
 	switch (t->op) {
-	case IR_TIMES:
-		emit("mul %s, %s, %s", reg(t->result), reg(t->arg1), reg(t->arg2));
-		break;
-	case IR_DIV:
-		emit("div %s, %s, %s", reg(t->result), reg(t->arg1), reg(t->arg2));
-		break;
-	case IR_ADD:
-		if (!t->arg2)
-			emit("addu %s, $zero, %s", reg(t->result), reg(t->arg1));
-		else
-			emit("addu %s, %s, %s", reg(t->result), reg(t->arg1), reg(t->arg2));
-		break;
-	case IR_SUB:
-		if (!t->arg2)
-			emit("subu %s, $zero, %s", reg(t->result), reg(t->arg1));
-		else
-			emit("subu %s, %s, %s", reg(t->result), reg(t->arg1), reg(t->arg2));
-		break;
+	case IR_ADD: case IR_SUB: case IR_TIMES: case IR_DIV:
+		gen_arith(t); break;
 	case IR_ASSIGN:
-		emit("move %s, %s", reg(t->result), reg(t->arg1));
+		get_reg(t, false);
+		if (t->arg1->type == REG_NUM)
+			emit("li %s, %d", reg(t->result), t->arg1->value);
+		else 
+			emit("move %s, %s", reg(t->result), reg(t->arg1));
 		break;
 	case IR_ASSIGN_ARR:
-		get_rhs_reg(t->arg1);
-		get_rhs_reg(t->arg2);
-		get_rhs_reg(t->result);
+		get_rhs_reg(t->arg1, true);
+		get_rhs_reg(t->arg2, true);
+		get_rhs_reg(t->result, true);
 		emit("sll $t9, %s, 2", reg(t->arg2));	// t9 instead of t8
 		emit("addu $t9, %s, $t9", reg(t->result));
 		emit("sw %s, 0($t9)", reg(t->arg1));
 		break;
 	case IR_ARR_ACCESS:
+		get_reg(t, true);
 		emit("sll $t8, %s, 2", reg(t->arg2));
 		emit("addu $t8, %s, $t8", reg(t->arg1));
 		emit("lw %s, 0($t8)", reg(t->result));
 		break;
-	case IR_LS:
-		emit("slt $t8, %s, %s", reg(t->arg1), reg(t->arg2));
-		if (t->if_false)
-			emit("beq $t8, $zero, L%d", t->to_label);
-		else
-			emit("bne $t8, $zero, L%d", t->to_label);
-		break;
-	case IR_GT:
-		emit("slt $t8, %s, %s", reg(t->arg2), reg(t->arg1));
-		if (t->if_false)
-			emit("beq $t8, $zero, L%d", t->to_label);
-		else
-			emit("bne $t8, $zero, L%d", t->to_label);
-		break;
-	case IR_NE:
-		emit("subu $t8, %s, %s", reg(t->arg1), reg(t->arg2));
-		if (t->if_false)
-			emit("beq $t8, $zero, L%d", t->to_label);
-		else
-			emit("bne $t8, $zero, L%d", t->to_label);
-		break;
-	case IR_EQ:
-		emit("subu $t8, %s, %s", reg(t->arg1), reg(t->arg2));
-		if (t->if_false)
-			emit("bne $t8, $zero, L%d", t->to_label);
-		else
-			emit("beq $t8, $zero, L%d", t->to_label);
-		break;
-	case IR_GE:
-		emit("slt $t8, %s, %s", reg(t->arg1), reg(t->arg2));
-		if (t->if_false)
-			emit("bne $t8, $zero, L%d", t->to_label);
-		else
-			emit("beq $t8, $zero, L%d", t->to_label);
-		break;
-	case IR_LE:
-		emit("slt $t8, %s, %s", reg(t->arg2), reg(t->arg1));
-		if (t->if_false)
-			emit("bne $t8, $zero, L%d", t->to_label);
-		else
-			emit("beq $t8, $zero, L%d", t->to_label);
+	case IR_LS: case IR_GT: case IR_NE: case IR_EQ: case IR_GE: case IR_LE:
+		get_reg(t, false);
+		clean_up_at_end_of_bb(bb->out_regs);// after get_reg(), do this before jumping
+		if (t->arg1->type == REG_NUM && t->arg2->type == REG_NUM) {
+			if (jump_directly(t->op, t->arg1->value, t->arg2->value, t->if_false))
+				emit("j L%d", t->to_label);
+		}
+		else if (t->arg1->type != REG_NUM && t->arg2->type == REG_NUM) {
+			if (t->arg2->value == 0)
+				emit("%s %s, L%d", branch_instr(t->op, t->if_false, true, false), reg(t->arg1), t->to_label);
+			else
+				emit("%s %s, %d, L%d", branch_instr(t->op, t->if_false, false, false), reg(t->arg1), t->arg2->value, t->to_label);
+		}
+		else if (t->arg1->type == REG_NUM && t->arg2->type != REG_NUM) {
+			if (t->arg1->value == 0)
+				emit("%s %s, L%d", branch_instr(t->op, t->if_false, true, true), reg(t->arg2), t->to_label);
+			else
+				emit("%s %s, %d, L%d", branch_instr(t->op, t->if_false, false, true), reg(t->arg2), t->arg1->value, t->to_label);
+		}
+		else {
+			emit("%s %s, %s, L%d", branch_instr(t->op, t->if_false, false, false), reg(t->arg1), reg(t->arg2), t->to_label);
+		}
 		break;
 	case IR_EXPR_BRANCH:
-		if (t->if_false)
-			emit("beq %s, $zero, L%d", reg(t->arg1), t->to_label);
-		else
-			emit("bne %s, $zero, L%d", reg(t->arg1), t->to_label);
+		get_reg(t, true);
+		clean_up_at_end_of_bb(bb->out_regs);// after get_reg(), do this before jumping
+		emit("%s %s, $zero, L%d", t->if_false ? "beq" : "bne",reg(t->arg1), t->to_label);
 		break;
 	case IR_GOTO:
+		clean_up_at_end_of_bb(bb->out_regs); // do this before jumping
 		emit("j L%d", t->to_label);
 		break;
 	case IR_LABEL:
@@ -489,7 +643,7 @@ static void ir2mips(IR *t, bool end_of_bb)
 	case IR_READ:
 		s = vec_get(env->symbols->values, 0);
 		if (s != NULL && s->flag & SYMBOL_PARAM) {
-			spill_reg(s);
+			spill_reg(s, SPILL_PARAM);
 			s->addr_des.in_reg = false;	// restore a0 upon exit of bb
 		}
 		for (int i = 0; i < t->num_args; i++) {
@@ -509,7 +663,7 @@ static void ir2mips(IR *t, bool end_of_bb)
 	case IR_WRITE:
 		s = vec_get(env->symbols->values, 0);
 		if (s != NULL && s->flag & SYMBOL_PARAM) {
-			spill_reg(s);
+			spill_reg(s, SPILL_PARAM);
 			s->addr_des.in_reg = false;
 		}
 		if (t->string_label) {
@@ -518,8 +672,8 @@ static void ir2mips(IR *t, bool end_of_bb)
 			emit("syscall");
 		}
 		if (t->arg1) {
-			get_rhs_reg(t->arg1);
-			if (t->arg1->symbol->type->type == TYPE_CHAR)
+			get_rhs_reg(t->arg1, true);
+			if (t->arg1->is_char)
 				emit("li $v0, 11");
 			else
 				emit("li $v0, 1");
@@ -536,7 +690,7 @@ static void ir2mips(IR *t, bool end_of_bb)
 			emit("li %s, %d", reg(t->result), t->arg1->value);
 		} // else var
 		else {
-			get_rhs_reg(t->result);
+			//get_rhs_reg(t->result, t->next_use, true);
 		}
 		break;
 	case IR_FUNC_DECL:
@@ -547,7 +701,7 @@ static void ir2mips(IR *t, bool end_of_bb)
 		reg_des_init();
 		alloc_local_var();
 		offset = OFF_FIRST_SAVED_REG;
-		if (!is_main_func)
+		if (!is_main_func && !is_leaf)
 			emit("sw $ra, -4($fp)");
 		for (int i = 0; i < reg_des->saved_reg->keys->len; i++) {
 			char *key = vec_get(reg_des->saved_reg->keys, i);
@@ -560,11 +714,12 @@ static void ir2mips(IR *t, bool end_of_bb)
 		emit("addiu $sp, $sp, %d", -(offset + env->offset));
 		break;
 	case IR_RETURN:
+		get_reg(t, true);
 		offset = OFF_FIRST_SAVED_REG;
-		flush_temp_reg(FLUSH_GLOBAL | FLUSH_LOCAL | LOCAL_NOT_SPILL);
+		flush_temp_reg(bb->out_regs, FLUSH_GLOBAL | FLUSH_LOCAL | LOCAL_NOT_SPILL);
 		if (t->arg1)
 			emit("move $v0, %s", reg(t->arg1));
-		if (!is_main_func)
+		if (!is_main_func && !is_leaf)
 			emit("lw $ra, -4($fp)");
 		for (int i = 0; i < reg_des->saved_reg->keys->len; i++) {
 			char *key = vec_get(reg_des->saved_reg->keys, i);
@@ -588,7 +743,8 @@ static void ir2mips(IR *t, bool end_of_bb)
 			Symbol *s = vec_get(env->symbols->values, i);
 			if ((s->flag & SYMBOL_PARAM)) {
 				//s->addr_des.in_mem = false;	// forced???
-				spill_reg(s);
+				spill_reg(s, SPILL_PARAM);
+				s->addr_des.in_reg = false;
 			}
 		}
 		
@@ -603,7 +759,7 @@ static void ir2mips(IR *t, bool end_of_bb)
 					emit("lw $a%d, %d($fp)", i, arg->symbol->offset + WORD_SIZE);
 				}
 				else {
-					get_rhs_reg(arg);
+					get_rhs_reg(arg, true);
 					emit("move $a%d, %s", i, reg(arg));
 					reg_des_unbind(REG_T8);	// make sure one of t8, t9 is free.
 				}
@@ -614,14 +770,15 @@ static void ir2mips(IR *t, bool end_of_bb)
 					emit("sw $t8, %d($sp)", i * WORD_SIZE);
 				}
 				else {
-					get_rhs_reg(arg);
+					get_rhs_reg(arg, true);
 					emit("sw %s, %d($sp)", reg(arg), i * WORD_SIZE);
 					reg_des_unbind(REG_T8);
 				}
 			}
 		}
-
-		flush_temp_reg(FLUSH_GLOBAL | FLUSH_LOCAL);
+		// 函数调用不开始一个基本块时需要第一个参数live应该是t->next_use,
+		// 否则应该是bb->out_regs
+		flush_temp_reg(bb->out_regs, FLUSH_GLOBAL | FLUSH_LOCAL);
 
 		emit("sw $fp, -4($sp)");
 		emit("addi $fp, $sp, -4");
@@ -631,13 +788,15 @@ static void ir2mips(IR *t, bool end_of_bb)
 		if (t->num_args > 0)
 			emit("addiu $sp, $sp, %d", t->num_args * WORD_SIZE);
 
+		load_params_at_end_of_bb(bb->out_regs);
+		/*
 		for (int i = 0; i < env->symbols->values->len; i++) {
 			Symbol *s = vec_get(env->symbols->values, i);
 			if ((s->flag & SYMBOL_PARAM) && s->addr_des.reg_num != 0) {
 				s->addr_des.in_reg = false;
 				//load_reg(s->addr_des.reg_num, s);
 			}
-		}
+		}*/
 
 		if (t->result) {
 			get_lhs_reg(t->result);
@@ -647,9 +806,10 @@ static void ir2mips(IR *t, bool end_of_bb)
 		break;
 	}
 
+	free_no_next_use_reg(t);
+
 	if (end_of_bb && t->op != IR_RETURN) {
-		params_clean_up_at_end_of_bb();
-		flush_temp_reg(FLUSH_GLOBAL | FLUSH_LOCAL);
+		clean_up_at_end_of_bb(bb->out_regs);
 	}
 
 	reg_des_unbind(REG_T8);
@@ -681,6 +841,19 @@ static void emit_data(BB *global_vars) {
 	}
 }
 
+static bool is_leaf_function(Vector *func)
+{
+	for (int i = 0; i < func->len; i++) {
+		BB *bb = vec_get(func, i);
+		for (int j = 0; j < bb->ir->len; j++) {
+			IR *t = vec_get(bb->ir, j);
+			if (t->op == IR_FUNC_CALL)
+				return false;
+		}
+	}
+	return true;
+}
+
 void gen_mips(Program *prog, char *path, int flag)
 {
 	if (prog == NULL)
@@ -698,6 +871,7 @@ void gen_mips(Program *prog, char *path, int flag)
 	emit("j main\n");
 	for (int i = 0; i < prog->funcs->len; i++) {
 		Vector *func = vec_get(prog->funcs, i);	// Vector of BB
+		is_leaf = is_leaf_function(func);
 		for (int j = 0; j < func->len; j++) {
 			BB *bb = vec_get(func, j);
 			if (flag & PRINT_TO_CONSOLE)
@@ -705,12 +879,11 @@ void gen_mips(Program *prog, char *path, int flag)
 			if (bb->label)
 				emitl("L%d:", bb->label);
 			for (int k = 0; k < bb->ir->len; k++) {
-				ir2mips(vec_get(bb->ir, k), k == bb->ir->len - 1);
+				ir2mips(vec_get(bb->ir, k), bb, k == bb->ir->len - 1);
 			}
 			IR *t = vec_get(bb->ir, bb->ir->len - 1);
 			if (flag & PRINT_TO_CONSOLE)
 				printf("#BB end\n\n");
 		}
 	}
-
 }
