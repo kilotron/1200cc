@@ -50,6 +50,7 @@ int main()
 	Program_AST *prog_ast = parse(tokens);
 	Vector *ir = NULL;
 	Program *prog;
+	bool gen_success;
 	if (prog_ast) {
 		ir = gen_ir(prog_ast);
 
@@ -64,11 +65,13 @@ int main()
 		char *p = stringf("%s%s_basic_block_optd_%X.txt", get_dir(path), get_filename(path), id);
 		basic_block_demo(prog, p);
 
-		gen_mips(prog, target_path, PRINT_TO_CONSOLE | PRINT_TO_FILE);
-		//gen_mips(prog, target_path, PRINT_TO_FILE);
+		gen_success = gen_mips(prog, target_path, PRINT_TO_CONSOLE | PRINT_TO_FILE);
+		//gen_success = gen_mips(prog, target_path, PRINT_TO_FILE);
 
-		_getcwd(cwd, PATH_LEN);
-		printf("目标代码输出到%s中。\n", target_path);
+		if (gen_success) {
+			_getcwd(cwd, PATH_LEN);
+			printf("目标代码输出到%s中。\n", target_path);
+		}
 	}
 		
 	return 0;

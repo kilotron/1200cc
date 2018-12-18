@@ -359,7 +359,7 @@ Vector * gen_ir(Program_AST *prog);
 void ir_demo(Vector *ir, char * path, int print_option);
 void basic_block_demo(Program *prog, char *path);
 Program * partition_program(Vector *ir);
-void gen_mips(Program *prog, char *path, int flag);
+bool gen_mips(Program *prog, char *path, int flag);
 // error.c
 void errorf(Token *t, const char *fmt, ...);
 void warningf(Token *t, const char *fmt, ...);

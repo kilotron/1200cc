@@ -1362,6 +1362,7 @@ static Node * return_stmt()
 	current_func_has_return = true;
 	match(TK_RETURN);
 	node = new_node(ND_RETURN_STMT);
+
 	if (look->type == '(') {
 		move();
 		e = expr();
@@ -1379,8 +1380,18 @@ static Node * return_stmt()
 		}
 	}
 	else if (current_func->type->ret != NULL) {
-		errorf(start, "'return' with no value, in function returning '%s'", 
-			current_func->type->ret->name);
+		if (look->type == ';') {
+			errorf(start, "'return' with no value, in function returning '%s'",
+				current_func->type->ret->name);
+		}
+		else {
+			errorf(look, "'(' is expected.", current_func->type->ret->name);
+			if (look->type == TK_ID) {
+				e = expr();
+				NOT_NULL_OR_ERROR(e, error_in_return_stmt);
+				node->left = e;
+			}
+		}
 		SEMANTIC_ERROR(error_in_program);
 	}
 
@@ -1478,24 +1489,7 @@ static Node * factor()
 				int i = index->value;
 				int max = symbol->type->len;
 				if (i < 0 || i >= max) {
-					errorf(start, "index out of bounds");
-				}
-			}
-
-			if (index->nd_type == ND_ID && 
-				(index->symbol->type->type == TYPE_CONST_CHAR || index->symbol->type->type == TYPE_CONST_INT)) {
-				int i = index->symbol->value;
-				int max = symbol->type->len;
-				if (i < 0 || i >= max) {
-					errorf(start, "index out of bounds");
-				}
-			}
-
-			if (index->nd_type == ND_CHARL || index->nd_type == ND_NUML) {
-				int i = index->value;
-				int max = symbol->type->len;
-				if (i < 0 || i >= max) {
-					errorf(start, "index out of bound");
+					warningf(start, "index out of bound");
 				}
 			}
 
@@ -1503,7 +1497,7 @@ static Node * factor()
 				int i = index->symbol->value;
 				int max = symbol->type->len;
 				if (i < 0 || i >= max) {
-					errorf(start, "index out of bound");
+					warningf(start, "index out of bound");
 				}
 			}
 		}

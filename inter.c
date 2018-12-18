@@ -92,9 +92,16 @@ static Reg * gen_expr_arg(Node *node)
 	Reg *arg = NULL;
 	switch (node->nd_type) {
 	case ND_ID:
-		arg = new_reg(REG_VAR);
-		arg->symbol = node->symbol;
-		arg->is_char = eq_oneof(2, arg->symbol->type->type, TYPE_CHAR, TYPE_CONST_CHAR);
+		if (eq_oneof(2, node->symbol->type->type, TYPE_CONST_CHAR, TYPE_CONST_INT)) {
+			arg = new_reg(REG_NUM);
+			arg->symbol = node->symbol;
+			arg->value = node->symbol->value;
+		}
+		else {
+			arg = new_reg(REG_VAR);
+			arg->symbol = node->symbol;
+		}
+		arg->is_char = !node->with_paren && eq_oneof(2, arg->symbol->type->type, TYPE_CHAR, TYPE_CONST_CHAR);
 		break;
 	case ND_CHARL:
 		arg = new_reg(REG_NUM);
@@ -107,9 +114,11 @@ static Reg * gen_expr_arg(Node *node)
 		break;
 	case ND_ARR_ACCESS:
 		arg = gen_arr_access(node);
+		arg->is_char = !node->with_paren && node->symbol->type->array_of->type == TYPE_CHAR;
 		break;
 	case ND_FUNC_CALL:
 		arg = gen_func_call(node);
+		arg->is_char = !node->with_paren && node->symbol->type->ret->type == TYPE_CHAR;
 		break;
 	case ND_EXPR:
 		arg = gen_expr(node);
@@ -389,6 +398,8 @@ static void gen_const_or_var_decl(Node *node)
 		if (def->nd_type == ND_CONST_DEF) {
 			arg1 = new_reg(REG_NUM);
 			arg1->value = def->value;
+			result->type = REG_NUM;
+			result->value = def->value;
 		}	// else ND_VAR_DEF
 		code = emit(IR_DECL, arg1, NULL, result);
 	}

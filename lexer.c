@@ -205,6 +205,8 @@ Token *string_literal()
 	nextc(src);
 	for (c = nextc(src); c != '\0' && c != '\n' && c != '"'; c = nextc(src)) {
 		sb_append(sb, &c, 1);
+		if (c == '\\')	// no escape character
+			sb_append(sb, &c, 1);
 	}
 
 	t->lexeme = sb_get(sb);

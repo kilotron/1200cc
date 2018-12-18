@@ -686,8 +686,8 @@ static void ir2mips(IR *t, BB *bb, bool end_of_bb)
 		break;
 	case IR_DECL:
 		if (t->arg1) {	// const
-			get_lhs_reg(t->result);
-			emit("li %s, %d", reg(t->result), t->arg1->value);
+			//get_lhs_reg(t->result);
+			//emit("li %s, %d", reg(t->result), t->arg1->value);
 		} // else var
 		else {
 			//get_rhs_reg(t->result, t->next_use, true);
@@ -789,14 +789,6 @@ static void ir2mips(IR *t, BB *bb, bool end_of_bb)
 			emit("addiu $sp, $sp, %d", t->num_args * WORD_SIZE);
 
 		load_params_at_end_of_bb(bb->out_regs);
-		/*
-		for (int i = 0; i < env->symbols->values->len; i++) {
-			Symbol *s = vec_get(env->symbols->values, i);
-			if ((s->flag & SYMBOL_PARAM) && s->addr_des.reg_num != 0) {
-				s->addr_des.in_reg = false;
-				//load_reg(s->addr_des.reg_num, s);
-			}
-		}*/
 
 		if (t->result) {
 			get_lhs_reg(t->result);
@@ -854,10 +846,10 @@ static bool is_leaf_function(Vector *func)
 	return true;
 }
 
-void gen_mips(Program *prog, char *path, int flag)
+bool gen_mips(Program *prog, char *path, int flag)
 {
 	if (prog == NULL)
-		return;
+		return false;
 	fp = fopen(path, "w");
 	if (fp == NULL) {
 		fprintf(stderr, "Cannot open file %s\n", path);
@@ -886,4 +878,5 @@ void gen_mips(Program *prog, char *path, int flag)
 				printf("#BB end\n\n");
 		}
 	}
+	return true;
 }
