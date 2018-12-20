@@ -266,6 +266,16 @@ static void print_basic_block(FILE *fp, BB *bb)
 			Symbol *s = vec_get(t->next_use, i);
 			fprintf(fp, "%s, ", s->name);
 		}
+		fprintf(fp, "\ndef: ");
+		for (int i = 0; i < t->def->len; i++) {
+			Symbol *s = vec_get(t->def, i);
+			fprintf(fp, "%s, ", s->name);
+		}
+		fprintf(fp, "\nout: ");
+		for (int i = 0; i < t->out->len; i++) {
+			Symbol *s = vec_get(t->out, i);
+			fprintf(fp, "%s, ", s->name);
+		}
 		fprintf(fp, "\n\n");
 	}
 	fprintf(fp, "out_regs:\n");

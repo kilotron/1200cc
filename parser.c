@@ -1386,7 +1386,7 @@ static Node * return_stmt()
 		}
 		else {
 			errorf(look, "'(' is expected.", current_func->type->ret->name);
-			if (look->type == TK_ID) {
+			if (eq_oneof(6, look->type, '+', '-', '(', TK_ID, TK_NUML, TK_CHARL)) {
 				e = expr();
 				NOT_NULL_OR_ERROR(e, error_in_return_stmt);
 				node->left = e;

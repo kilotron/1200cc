@@ -10,11 +10,13 @@
 #define SPILL_ALL (SPILL_LOCAL | SPILL_PARAM | SPILL_GLOBAL)
 
 // is_constant(Reg *r, int *value);
-
+extern bool live_variable_analysis_ON;
+extern bool saved_reg_alloc_ON;
 static int offset_of_first_var_in_stack_from_fp;	// always non-negative.
 static int spill = REG_T0;	// temporary register to spill
 static FILE *fp;
 static int print_option;
+static bool lhs_reg_got;
 
 char *name[] = { 
 	"$zero", "$at", "$v0", "$v1", "$a0", "$a1", "$a2", "$a3",
@@ -72,6 +74,26 @@ static void emit(char *fmt, ...)
 	va_end(va);
 }
 
+static void comment(char *fmt, ...)
+{
+	extern bool comment_ON;
+	if (!comment_ON)
+		return;
+	va_list va;
+	va_start(va, fmt);
+	if (print_option & PRINT_TO_CONSOLE) {
+		printf("\t# ");
+		vprintf(fmt, va);
+		printf("\n");
+	}
+	if (print_option & PRINT_TO_FILE) {
+		fprintf(fp, "\t# ");
+		vfprintf(fp, fmt, va);
+		fprintf(fp, "\n");
+	}
+	va_end(va);
+}
+
 /* Initialize register descpritor: all saved registers and temporary registers
    are free. This function should be called before each function declaration.
    and before generating mips instructions. */
@@ -96,6 +118,11 @@ static void reg_des_unbind(int reg_num)
 static bool is_temp_reg(int reg_num)
 {
 	return (reg_num >= REG_T0 && reg_num <= REG_T7) || reg_num == REG_T8 || reg_num == REG_T9;
+}
+
+bool is_saved_reg(int reg_num)
+{
+	return (reg_num >= REG_S0 && reg_num <= REG_S7);
 }
 
 /* Pre-conditions: symbol != NULL. 
@@ -240,6 +267,7 @@ static void unalloc(Symbol *symbol)
 	symbol->addr_des.in_reg = false;
 	symbol->addr_des.reg_num = 0;
 	reg_des_unbind(reg_num);
+	comment("将分配给%s的寄存器%s释放，因为%s无后续使用", symbol->name, name[reg_num], symbol->name);
 }
 
 /* If next-use information has been computed, makes use of it to manage register 
@@ -274,6 +302,9 @@ static void free_no_next_use_reg(IR *t)
 /* next-use information is used to free reg that is no longer used.*/
 static void get_rhs_reg(Reg *r, bool load_constant)
 {
+	if (live_variable_analysis_ON && lhs_reg_got) {
+		fprintf(stderr, "程序逻辑出错：优化开启时应该先调用get_lhs_reg()\n");
+	}
 	if (r->type == REG_NUM) {
 		if (!load_constant)
 			return;
@@ -312,12 +343,50 @@ static void get_rhs_reg(Reg *r, bool load_constant)
 }
 
 /* This register is going to be modified.*/
-static void get_lhs_reg(Reg *r)
+static void get_lhs_reg(Reg *r, IR *t)
 {
 	// assert t->symbol->type->type is int or char 
 	if (r->symbol->addr_des.reg_num) {
 		r->rn = r->symbol->addr_des.reg_num;
 		goto get_lhs_reg_exit;
+	}
+
+	// 优化的代码,使用此段代码要求在get_rhs_reg调用之后再调用get_lhs_reg
+	if (live_variable_analysis_ON && t->op != IR_READ) {
+		Symbol *s = NULL;
+		int reg_num;
+		bool success = false;
+		if (t->arg1 && t->arg1->symbol && is_temp_reg(t->arg1->symbol->addr_des.reg_num)
+			&& !vec_is_in(t->next_use, t->arg1->symbol)) {
+			s = t->arg1->symbol;
+			success = true;
+		}
+		else if (t->arg2 && t->arg2->symbol && is_temp_reg(t->arg2->symbol->addr_des.reg_num) 
+			&& !vec_is_in(t->next_use, t->arg2->symbol)) {
+			s = t->arg2->symbol;
+			success = true;
+		}
+		else {
+			for (int i = 0; i < t->num_args; i++) {
+				Reg *arg = vec_get(t->args, i);
+				if (arg->symbol && is_temp_reg(arg->symbol->addr_des.reg_num) 
+					&& !vec_is_in(t->next_use, arg->symbol)) {
+					s = arg->symbol;
+					success = true;
+					break;
+				}
+			}
+		}
+		if (success) {
+			s->addr_des.in_reg = false;
+			reg_num = s->addr_des.reg_num;
+			s->addr_des.reg_num = 0;
+			reg_des_bind(reg_num, r->symbol);
+			r->symbol->addr_des.reg_num = reg_num;
+			r->rn = reg_num;
+			comment("将%s分配给%s，因为%s无后续使用", name[reg_num], r->symbol->name, s->name);
+			goto get_lhs_reg_exit;
+		}
 	}
 
 	/* Attempt to find a free temporary register.*/
@@ -335,6 +404,7 @@ static void get_lhs_reg(Reg *r)
 get_lhs_reg_exit:
 	r->symbol->addr_des.in_reg = true;
 	r->symbol->addr_des.in_mem = false;
+	lhs_reg_got = true;
 }
 
 /* var includes local variable and parameters in a function.
@@ -342,6 +412,29 @@ get_lhs_reg_exit:
 static void alloc_local_var()
 {
 	Symbol *symbol;
+
+	if (saved_reg_alloc_ON) {
+		// has already been allocated. Deal with a0-a3 before return.
+		for (int i = 0; i < env->symbols->values->len; i++) {
+			symbol = vec_get(env->symbols->values, i);
+			if (symbol->flag & SYMBOL_PARAM) {
+				if (i < 4) {
+					symbol->addr_des.reg_num = i + REG_A0;
+					symbol->addr_des.in_mem = false;
+					symbol->addr_des.in_reg = true;
+				}
+				else {
+					symbol->addr_des.in_mem = true;
+					symbol->addr_des.in_reg = false;
+				}
+			}
+			if (is_saved_reg(symbol->addr_des.reg_num)) {
+				map_put(reg_des->saved_reg, name[symbol->addr_des.reg_num], symbol);
+			}
+		}
+		return;
+	}
+
 	for (int i = 0; i < env->symbols->values->len; i++) {
 		symbol = vec_get(env->symbols->values, i);
 		if (symbol->flag & SYMBOL_TEMP) {
@@ -386,7 +479,7 @@ static void get_reg(IR *t, bool load_constant)
 	if (t->arg2)
 		get_rhs_reg(t->arg2, load_constant);
 	if (t->result)
-		get_lhs_reg(t->result);
+		get_lhs_reg(t->result, t);
 }
 
 static char *reg(Reg *r)
@@ -416,7 +509,6 @@ static void flush_temp_reg(Vector *live, int flag)
 {
 	char *key;
 	Symbol *s;
-	extern bool live_variable_analysis_ON;
 	for (int i = 0; i < reg_des->temp_reg->keys->len; i++) {
 		key = vec_get(reg_des->temp_reg->keys, i);
 		s = map_get(reg_des->temp_reg, key);
@@ -580,7 +672,7 @@ static void ir2mips(IR *t, BB *bb, bool end_of_bb)
 {
 	int offset;
 	Symbol *s;
-	
+	lhs_reg_got = false;
 	switch (t->op) {
 	case IR_ADD: case IR_SUB: case IR_TIMES: case IR_DIV:
 		gen_arith(t); break;
@@ -648,7 +740,7 @@ static void ir2mips(IR *t, BB *bb, bool end_of_bb)
 		}
 		for (int i = 0; i < t->num_args; i++) {
 			Reg *r = vec_get(t->args, i);
-			get_lhs_reg(r);
+			get_lhs_reg(r, t);
 			if (r->symbol->type->type == TYPE_CHAR)
 				emit("li $v0, 12");
 			else // int
@@ -684,15 +776,6 @@ static void ir2mips(IR *t, BB *bb, bool end_of_bb)
 		emit("la $a0, newline");
 		emit("syscall");
 		break;
-	case IR_DECL:
-		if (t->arg1) {	// const
-			//get_lhs_reg(t->result);
-			//emit("li %s, %d", reg(t->result), t->arg1->value);
-		} // else var
-		else {
-			//get_rhs_reg(t->result, t->next_use, true);
-		}
-		break;
 	case IR_FUNC_DECL:
 		is_main_func = streql(t->name, "main");
 		emitl(is_main_func ? "main:" : "f_%s:", t->name);
@@ -712,6 +795,11 @@ static void ir2mips(IR *t, BB *bb, bool end_of_bb)
 		}
 		offset_of_first_var_in_stack_from_fp = -offset;
 		emit("addiu $sp, $sp, %d", -(offset + env->offset));
+		for (int i = 0; i < reg_des->saved_reg->values->len; i++) {
+			Symbol *symbol = vec_get(reg_des->saved_reg->values, i);
+			if (symbol->addr_des.reg_num)	// redundant
+				load_reg(symbol->addr_des.reg_num, symbol);
+		}
 		break;
 	case IR_RETURN:
 		get_reg(t, true);
@@ -790,8 +878,8 @@ static void ir2mips(IR *t, BB *bb, bool end_of_bb)
 
 		load_params_at_end_of_bb(bb->out_regs);
 
-		if (t->result) {
-			get_lhs_reg(t->result);
+		if (t->result && vec_is_in(bb->out_regs, t->result->symbol)) {
+			get_lhs_reg(t->result, t);
 			emit("move %s, $v0", reg(t->result));
 		}
 

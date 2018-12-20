@@ -79,6 +79,15 @@ void vec_appendv(Vector *v1, Vector *v2)
 	}
 }
 
+Vector *vec_clone(Vector *v)
+{
+	Vector *v0 = new_vec();
+	for (int i = 0; i < v->len; i++) {
+		vec_put(v0, v->data[i]);
+	}
+	return v0;
+}
+
 /* Post-conditions: If v is NULL or index is out of bounds returns NULL
 else returns v[index].*/
 void * vec_get(Vector * v, int index)
@@ -94,6 +103,29 @@ void vec_remove(Vector *v, int index)
 	for (int i = index; i < v->len - 1; i++)
 		v->data[i] = v->data[i + 1];
 	v->len--;
+}
+
+void vec_remove_elem(Vector *v, void *elem)
+{
+	for (int i = 0; i < v->len; i++) {
+		if (v->data[i] == elem) {
+			vec_remove(v, i);
+			return;
+		}
+	}
+}
+
+void vec_remove_duplicates(Vector *v)
+{
+	void *e1, *e2;
+	for (int i = 0; i < v->len; i++) {
+		e1 = vec_get(v, i);
+		for (int j = i + 1; j < v->len; j++) {
+			e2 = vec_get(v, j);
+			if (e1 == e2)
+				vec_remove(v, j--);
+		}
+	}
 }
 
 bool vec_is_in(Vector *v, void *elem)

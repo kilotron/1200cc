@@ -61,6 +61,8 @@ static IR * new_ir(int op) {
 	i->op = op;
 	i->is_leader = false;
 	i->next_use = new_vec();
+	i->def = new_vec();
+	i->out = new_vec();
 	return i;
 }
 
@@ -396,8 +398,8 @@ static void gen_const_or_var_decl(Node *node)
 		result = new_reg(REG_VAR);
 		result->symbol = def->symbol;
 		if (def->nd_type == ND_CONST_DEF) {
-			arg1 = new_reg(REG_NUM);
-			arg1->value = def->value;
+			arg1 = new_reg(REG_NUM);	// this can be removed...
+			arg1->value = def->value;	// redundant arg1
 			result->type = REG_NUM;
 			result->value = def->value;
 		}	// else ND_VAR_DEF

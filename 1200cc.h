@@ -310,7 +310,9 @@ typedef struct {
 	int string_label;
 
 	bool is_leader;	// for partitioning bb
-	Vector *next_use;	// next-use symbols
+	Vector *next_use;	// next-use symbols: variables in arg1, arg2, args and result
+	Vector *def;	// lists the variables that may be assigned a value by the instruction
+	Vector *out;	// variables live at end of this ir, globals excluded.
 } IR;
 
 typedef struct {
@@ -365,6 +367,7 @@ void errorf(Token *t, const char *fmt, ...);
 void warningf(Token *t, const char *fmt, ...);
 char *type2string(int type);
 char *type2str(int type);
+bool is_saved_reg(int reg_num);
 
 void optimization(Program * prog);
 void data_flow_analysis(Program *prog);

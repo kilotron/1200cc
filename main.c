@@ -2,8 +2,12 @@
 #include <direct.h>
 #include <time.h>
 #define PATH_LEN 256
+
 bool error_in_program = false;
 bool live_variable_analysis_ON = true;
+bool constant_folding_ON = true;
+bool comment_ON = false;
+bool saved_reg_alloc_ON = true;
 
 char *get_dir(const char *path)
 {
@@ -65,8 +69,8 @@ int main()
 		char *p = stringf("%s%s_basic_block_optd_%X.txt", get_dir(path), get_filename(path), id);
 		basic_block_demo(prog, p);
 
-		gen_success = gen_mips(prog, target_path, PRINT_TO_CONSOLE | PRINT_TO_FILE);
-		//gen_success = gen_mips(prog, target_path, PRINT_TO_FILE);
+		//gen_success = gen_mips(prog, target_path, PRINT_TO_CONSOLE | PRINT_TO_FILE);
+		gen_success = gen_mips(prog, target_path, PRINT_TO_FILE);
 
 		if (gen_success) {
 			_getcwd(cwd, PATH_LEN);

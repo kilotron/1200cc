@@ -46,6 +46,8 @@ static void mark_leaders(Vector *ir, int start, int end)
 		else if (t->op == IR_FUNC_CALL) {
 			// each procedure call starts a new basic block
 			t2 = vec_get(ir, j + 1);
+			if (t2->op == IR_ASSIGN && t2->arg1 == t->result)
+				t2 = vec_get(ir, j + 2);	//function always ends with a ret, so t2!=NULL
 			t2->is_leader = true;
 		}
 	}
@@ -202,6 +204,8 @@ static void compute_def_use_of_bb(BB *bb)
 	IR *t;
 	for (int i = 0; i < bb->ir->len; i++) {
 		t = vec_get(bb->ir, i);
+		if (t->result)
+			vec_put(t->def, t->result->symbol);
 		switch (t->op) {
 		case IR_ASSIGN: case IR_TIMES: case IR_DIV: case IR_ADD: case IR_SUB:
 		case IR_LS: case IR_LE: case IR_GT: case IR_GE: case IR_EQ: case IR_NE:
@@ -225,14 +229,18 @@ static void compute_def_use_of_bb(BB *bb)
 					if (arg->symbol && !vec_is_in(vec_union(bb->use, bb->def), arg->symbol))
 						vec_put(bb->use, arg->symbol);
 				}
-			if (t->result && !vec_is_in(vec_union(bb->use, bb->def), t->result->symbol))
+			if (t->result && !vec_is_in(vec_union(bb->use, bb->def), t->result->symbol)) {
 				vec_put(bb->def, t->result->symbol);
+			}
 			break;
 		case IR_READ:
 			for (int i = 0; i < t->num_args; i++) {
 				Reg *arg = vec_get(t->args, i);
-				if (arg->symbol && !vec_is_in(vec_union(bb->use, bb->def), arg->symbol))
+				if (arg->symbol && !vec_is_in(vec_union(bb->use, bb->def), arg->symbol)) {
 					vec_put(bb->def, arg->symbol);
+				}
+				if (arg->symbol)
+					vec_put(t->def, arg->symbol);
 			}
 			break;
 		case IR_DECL:	// 常量
@@ -240,7 +248,14 @@ static void compute_def_use_of_bb(BB *bb)
 				vec_put(bb->def, t->result->symbol);
 			}
 			break;
-		} // default: IR_LABEL, IR_GOTO, IR_FUNC_DECL
+		case IR_FUNC_DECL:	// 参数的赋值需要
+			for (int i = 0; i < t->num_args; i++) {
+				Reg *arg = vec_get(t->args, i);
+				if (arg->symbol)
+					vec_put(t->def, arg->symbol);
+			}
+			break;
+		} // default: IR_LABEL, IR_GOTO
 	}
 }
 
@@ -312,6 +327,21 @@ static void reset_env(Env *env, BB *globals, Vector *out_regs)
 	}
 }
 
+/*Excluding globals.*/
+static Vector * get_live_var(Env *env)
+{
+	Vector *symbols = env->symbols->values;
+	Symbol *s;
+	Vector *live = new_vec();
+	for (int i = 0; i < symbols->len; i++) {
+		s = vec_get(symbols, i);
+		if (s->live) {
+			vec_put(live, s);
+		}
+	}
+	return live;
+}
+
 /* Reference:
 https://www2.cs.arizona.edu/~collberg/Teaching/453/2009/Handouts/Handout-21.pdf
 */
@@ -337,9 +367,13 @@ void get_next_use_info(Program *prog)
 					A literal is not live.
 				   2.In the symbol table, update next-use information.*/
 				switch (t->op) {
-				case IR_FUNC_DECL: case IR_DECL: case IR_GOTO: case IR_LABEL:
+				case IR_DECL: case IR_GOTO: case IR_LABEL:
 					break;	// do nothing
+				case IR_FUNC_DECL:
+					t->out = get_live_var(env);
+					break;
 				case IR_FUNC_CALL:
+					t->out = get_live_var(env);
 					if (t->result) { // with ret value
 						if (t->result->symbol->live)
 							vec_put_if_not_in(t->next_use, t->result->symbol);
@@ -355,6 +389,7 @@ void get_next_use_info(Program *prog)
 					}
 					break;
 				case IR_READ:
+					t->out = get_live_var(env);
 					for (int i = 0; i < t->args->len; i++) {
 						Reg *arg = vec_get(t->args, i);
 						if (arg->symbol->live)
@@ -363,6 +398,7 @@ void get_next_use_info(Program *prog)
 					}
 					break;
 				default:
+					t->out = get_live_var(env);
 					if (t->result) {
 						if (t->result->symbol->live)
 							vec_put_if_not_in(t->next_use, t->result->symbol);
