@@ -111,9 +111,13 @@ static Vector * var_live_on_exit_from_bb(Vector *func_of_bb)
    globals and the first 4 parameters are not candidates.*/
 static bool is_cand_var(Symbol *s, Vector *var_live)
 {	
-	return (s->flag & SYMBOL_LOCAL) 
+	/*return (s->flag & SYMBOL_LOCAL) 
 		&& !eq_oneof(2, s->type->type, TYPE_CONST_CHAR, TYPE_CONST_INT)
 		&& !(s->flag & SYMBOL_PARAM && s->offset < 16)
+		&& vec_is_in(var_live, s);*/
+	return (s->flag & SYMBOL_LOCAL)
+		&& !eq_oneof(2, s->type->type, TYPE_CONST_CHAR, TYPE_CONST_INT)
+		&& !(s->flag & SYMBOL_PARAM)
 		&& vec_is_in(var_live, s);
 }
 
