@@ -204,7 +204,7 @@ static void compute_def_use_of_bb(BB *bb)
 	IR *t;
 	for (int i = 0; i < bb->ir->len; i++) {
 		t = vec_get(bb->ir, i);
-		if (t->result)
+		if (t->result && (t->op != IR_FUNC_DECL))
 			vec_put(t->def, t->result->symbol);
 		switch (t->op) {
 		case IR_ASSIGN: case IR_TIMES: case IR_DIV: case IR_ADD: case IR_SUB:

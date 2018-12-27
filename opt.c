@@ -106,17 +106,13 @@ static Vector * var_live_on_exit_from_bb(Vector *func_of_bb)
 	return live_var;
 }
 
-/* Local variables, the nth parameter(n > 4) or temporary variables that(3) are live
+/* Local variables or temporary variables that are live
    on exit from the block are candidates for allocating registers. Constants, 
-   globals and the first 4 parameters are not candidates.*/
+   globals, parameters or arrays are not candidates.*/
 static bool is_cand_var(Symbol *s, Vector *var_live)
 {	
-	/*return (s->flag & SYMBOL_LOCAL) 
-		&& !eq_oneof(2, s->type->type, TYPE_CONST_CHAR, TYPE_CONST_INT)
-		&& !(s->flag & SYMBOL_PARAM && s->offset < 16)
-		&& vec_is_in(var_live, s);*/
 	return (s->flag & SYMBOL_LOCAL)
-		&& !eq_oneof(2, s->type->type, TYPE_CONST_CHAR, TYPE_CONST_INT)
+		&& !eq_oneof(3, s->type->type, TYPE_CONST_CHAR, TYPE_CONST_INT, TYPE_ARRAY)
 		&& !(s->flag & SYMBOL_PARAM)
 		&& vec_is_in(var_live, s);
 }
@@ -132,12 +128,14 @@ static Vector * RIG(Vector *func_of_bb)
 			IR *t = vec_get(bb->ir, j);
 			for (int k = 0; k < t->def->len; k++) {
 				Symbol *def = vec_get(t->def, k);
+				if (!is_cand_var(def, var_live))
+					continue;
+				node1 = get_node_in_graph(nodes, def);
 				for (int l = 0; l < t->out->len; l++) {
 					Symbol *live = vec_get(t->out, l);
-					if (!is_cand_var(def, var_live) || !is_cand_var(live, var_live)
+					if (!is_cand_var(live, var_live)
 						|| def == live)
 						continue;
-					node1 = get_node_in_graph(nodes, def);
 					node2 = get_node_in_graph(nodes, live);
 					vec_put(node1->adj, node2);
 					vec_put(node2->adj, node1);
@@ -176,11 +174,11 @@ static void assign_reg(RIG_Node *node)
 	for (int i = REG_S0; i <= REG_S7; i++) {
 		if (!assigned[i]) {
 			node->symbol->addr_des.reg_num = i;
-			//printf("½«¼Ä´æÆ÷%s·ÖÅä¸ø%s\n", name[i], node->symbol->name);
+			printf("½«¼Ä´æÆ÷%s·ÖÅä¸ø%s\n", name[i], node->symbol->name);
 			return;
 		}
 	}
-	//printf("%sÎ´·ÖÅäµ½¼Ä´æÆ÷\n", node->symbol->name);
+	printf("%sÎ´·ÖÅäµ½¼Ä´æÆ÷\n", node->symbol->name);
 }
 
 static void alloc_local_var(Vector *func_of_bb)

@@ -266,7 +266,7 @@ Token *sc_symbol()
 
 Token * next_token()
 {
-	char c;
+	int c;
 	Token *t = NULL;
 
 	while (t == NULL) {

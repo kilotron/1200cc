@@ -303,7 +303,7 @@ static void free_no_next_use_reg(IR *t)
 static void get_rhs_reg(Reg *r, bool load_constant)
 {
 	if (live_variable_analysis_ON && lhs_reg_got) {
-		fprintf(stderr, "程序逻辑出错：优化开启时应该先调用get_lhs_reg()\n");
+		fprintf(stderr, "程序逻辑出错：应该先调用get_lhs_reg()\n");
 	}
 	if (r->type == REG_NUM) {
 		if (!load_constant)
@@ -428,7 +428,7 @@ static void alloc_local_var()
 					symbol->addr_des.in_reg = false;
 				}
 			}
-			if (is_saved_reg(symbol->addr_des.reg_num)) {
+			if (is_saved_reg(symbol->addr_des.reg_num)) {//用来判断有哪些保存寄存器被占用需要保存
 				map_put(reg_des->saved_reg, name[symbol->addr_des.reg_num], symbol);
 			}
 		}
@@ -578,7 +578,13 @@ static void gen_arith(IR *t)
 	if (t->arg1->type == REG_NUM && t->arg2->type == REG_NUM) 
 		emit("li %s, %d", reg(t->result), arith_result(t->op, t->arg1->value, t->arg2->value));
 	else if (t->arg1->type == REG_NUM && t->arg2->type != REG_NUM) {
-		emit("%s %s, %s, %d", arith_instr(t->op, true), reg(t->result), reg(t->arg2), t->arg1->value);
+		if (t->op == IR_DIV) {
+			emit("li $t9, %d", t->arg1->value);
+			emit("%s %s, $t9, %s", arith_instr(t->op, true), reg(t->result), reg(t->arg2));
+		}
+		else {
+			emit("%s %s, %s, %d", arith_instr(t->op, true), reg(t->result), reg(t->arg2), t->arg1->value);
+		}
 		if (t->op == IR_SUB)
 			emit("negu %s, %s", reg(t->result), reg(t->result));
 	}
@@ -643,16 +649,22 @@ static bool jump_directly(int ir_op, int arg1, int arg2, bool if_false)
 	return if_false ? !ret : ret;
 }
 
-static void load_params_at_end_of_bb(Vector *live)
+
+static void load_params_at_end_of_bb(Vector *outregs)
 {
 	Symbol *s;
 	for (int i = 0; i < env->symbols->values->len; i++) {
 		s = vec_get(env->symbols->values, i);
 		if (s->flag & SYMBOL_PARAM
 			&& s->addr_des.reg_num >= REG_A0
-			&& s->addr_des.reg_num <= REG_A3
-			&& vec_is_in(live, s)) {
-			load_reg(s->addr_des.reg_num, s);
+			&& s->addr_des.reg_num <= REG_A3) {
+			if (live_variable_analysis_ON) {
+				if (vec_is_in(outregs, s))
+					load_reg(s->addr_des.reg_num, s);
+			}
+			else {
+				load_reg(s->addr_des.reg_num, s);
+			}
 			s->addr_des.in_mem = false;
 		}
 	}
@@ -662,10 +674,10 @@ static void load_params_at_end_of_bb(Vector *live)
    upon entry and exit of a basic block. This function should be called
    at the end of a basic block.
    2.Store values in temporary registers back into their memory locations.*/
-static void clean_up_at_end_of_bb(Vector *live)
+static void clean_up_at_end_of_bb(Vector *outregs)
 {
-	load_params_at_end_of_bb(live);
-	flush_temp_reg(live, FLUSH_LOCAL | FLUSH_GLOBAL);
+	load_params_at_end_of_bb(outregs);
+	flush_temp_reg(outregs, FLUSH_LOCAL | FLUSH_GLOBAL);
 }
 
 static void ir2mips(IR *t, BB *bb, bool end_of_bb)
@@ -733,11 +745,6 @@ static void ir2mips(IR *t, BB *bb, bool end_of_bb)
 		emitl("L%d", t->b_label);
 		break;
 	case IR_READ:
-		s = vec_get(env->symbols->values, 0);
-		if (s != NULL && s->flag & SYMBOL_PARAM) {
-			spill_reg(s, SPILL_PARAM);
-			s->addr_des.in_reg = false;	// restore a0 upon exit of bb
-		}
 		for (int i = 0; i < t->num_args; i++) {
 			Reg *r = vec_get(t->args, i);
 			get_lhs_reg(r, t);
@@ -748,9 +755,6 @@ static void ir2mips(IR *t, BB *bb, bool end_of_bb)
 			emit("syscall");
 			emit("move %s, $v0", reg(r));
 		}
-		emit("li $v0, 4");
-		emit("la $a0, newline");
-		emit("syscall");
 		break;
 	case IR_WRITE:
 		s = vec_get(env->symbols->values, 0);
@@ -775,6 +779,9 @@ static void ir2mips(IR *t, BB *bb, bool end_of_bb)
 		emit("li $v0, 4");
 		emit("la $a0, newline");
 		emit("syscall");
+		if (s != NULL && s->flag & SYMBOL_PARAM) {
+			s->addr_des.in_reg = false;
+		}
 		break;
 	case IR_FUNC_DECL:
 		is_main_func = streql(t->name, "main");
@@ -794,7 +801,10 @@ static void ir2mips(IR *t, BB *bb, bool end_of_bb)
 			offset += 4;
 		}
 		offset_of_first_var_in_stack_from_fp = -offset;
+		if (is_main_func)
+			emit("addi $fp, $sp, -4"); // no one setup fp for main, so main has to to this itself
 		emit("addiu $sp, $sp, %d", -(offset + env->offset));
+		
 		for (int i = 0; i < reg_des->saved_reg->values->len; i++) {
 			Symbol *symbol = vec_get(reg_des->saved_reg->values, i);
 			if (symbol->addr_des.reg_num)	// redundant
@@ -804,6 +814,7 @@ static void ir2mips(IR *t, BB *bb, bool end_of_bb)
 	case IR_RETURN:
 		get_reg(t, true);
 		offset = OFF_FIRST_SAVED_REG;
+		load_params_at_end_of_bb(bb->out_regs);
 		flush_temp_reg(bb->out_regs, FLUSH_GLOBAL | FLUSH_LOCAL | LOCAL_NOT_SPILL);
 		if (t->arg1)
 			emit("move $v0, %s", reg(t->arg1));
@@ -826,7 +837,6 @@ static void ir2mips(IR *t, BB *bb, bool end_of_bb)
 		}
 		break;
 	case IR_FUNC_CALL:
-		
 		for (int i = 0; i < env->symbols->values->len; i++) {
 			Symbol *s = vec_get(env->symbols->values, i);
 			if ((s->flag & SYMBOL_PARAM)) {
@@ -908,6 +918,7 @@ static void emit_data(BB *global_vars) {
 	for (int i = 0; i < global_vars->ir->len; i++) {
 		IR *t = vec_get(global_vars->ir, i);
 		Symbol *s = t->result->symbol;
+		s->addr_des.in_mem = true;
 		if (t->arg1) {
 			// constant
 			emit("g_%s: .word %d", s->name, t->arg1->value);

@@ -343,6 +343,7 @@ after_const_decl_in_program:
 		}
 
 		errorf(look, "expected function declaration");
+		error = true;
 		skip_to_end_of_block_or_stmt();
 	}
 	
@@ -1231,6 +1232,26 @@ error_in_args_list:
 	return NULL;
 }
 
+static void array_bound_checking(Symbol *symbol, Token *token, Node *index)
+{
+	// 数组越界检查，
+	if (index->nd_type == ND_CHARL || index->nd_type == ND_NUML) {
+		int i = index->value;
+		int max = symbol->type->len;
+		if (i < 0 || i >= max) {
+			warningf(token, "index out of bound");
+		}
+	}
+
+	if (index->nd_type == ND_ID && (index->symbol->type->type == TYPE_CONST_INT || index->symbol->type->type == TYPE_CONST_CHAR)) {
+		int i = index->symbol->value;
+		int max = symbol->type->len;
+		if (i < 0 || i >= max) {
+			warningf(token, "index out of bound");
+		}
+	}
+}
+
 /* Pre-conditions: look is an identifier.*/
 static Node * assign_stmt()
 {
@@ -1246,6 +1267,7 @@ static Node * assign_stmt()
 
 	if (look->type == '[') {
 		MATCH_OR_ERROR('[', error_in_assign_stmt);
+		token = look;	// for bound checking
 		Node *index = expr();
 		NOT_NULL_OR_ERROR(index, error_in_assign_stmt);
 		MATCH_OR_ERROR(']', error_in_assign_stmt);
@@ -1257,6 +1279,7 @@ static Node * assign_stmt()
 			errorf(start, "'%s' is not an array", symbol->name);
 			SEMANTIC_ERROR(error);
 		}
+		array_bound_checking(symbol, token, index);
 	}
 	else {
 		lhs = new_id_node(token, symbol);
@@ -1469,7 +1492,7 @@ static Node * factor()
 {
 	Node *node = new_node(ND_NUML);	// default value when error occurs
 	Symbol *symbol;
-	Token *start = look;
+	Token *start = look, *token;
 	if (look->type == TK_ID) {
 		symbol = assert_decld_id(look);
 		if (eq_oneof(4, symbol->type->type, TYPE_CHAR, TYPE_INT, TYPE_CONST_CHAR,
@@ -1480,26 +1503,13 @@ static Node * factor()
 		else if (symbol->type->type == TYPE_ARRAY) {
 			move();
 			MATCH_OR_ERROR('[', error_in_factor);
+			token = look;
 			Node *index = expr();
 			NOT_NULL_OR_ERROR(index, error_in_factor);
 			MATCH_OR_ERROR(']', error_in_factor);
 			node = new_array_access_node(symbol, index);
 			// 数组越界检查，
-			if (index->nd_type == ND_CHARL || index->nd_type == ND_NUML) {
-				int i = index->value;
-				int max = symbol->type->len;
-				if (i < 0 || i >= max) {
-					warningf(start, "index out of bound");
-				}
-			}
-
-			if (index->nd_type == ND_ID && (index->symbol->type->type == TYPE_CONST_INT || index->symbol->type->type == TYPE_CONST_CHAR)) {
-				int i = index->symbol->value;
-				int max = symbol->type->len;
-				if (i < 0 || i >= max) {
-					warningf(start, "index out of bound");
-				}
-			}
+			array_bound_checking(symbol, token, index);
 		}
 		else if (symbol->type->type == TYPE_FUNC) {
 			if (symbol->type->ret == NULL) {
