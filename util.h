@@ -5,6 +5,8 @@
 #include <string.h>
 #include <ctype.h>
 #include <stdarg.h>
+#define PATH_LEN 256
+
 
 // Vector is an ordered dynamic array of pointers.
 typedef struct {
@@ -97,5 +99,9 @@ TypeSet *typeset_union(TypeSet *t1, TypeSet *t2);
 bool eq_oneof(int num_vargs, int a, ...);
 
 char * stringf(const char * fmt, ...);
+
+char * get_dir(const char * path);
+
+char * get_filename(const char * path);
 
 

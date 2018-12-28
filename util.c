@@ -379,3 +379,32 @@ char *stringf(const char *fmt, ...)
 	strcpy(s, buf);
 	return s;
 }
+
+char *get_dir(const char *path)
+{
+	char *p = stringf("%s", path);
+	char cwd[PATH_LEN];
+	int i;
+	for (i = strlen(p) - 1; i >= 0; i--)
+		if (p[i] == '\\') {
+			p[i + 1] = '\0';
+			return p;
+		}
+	// if path is a relative path
+	_getcwd(cwd, PATH_LEN);
+	return stringf("%s\\", cwd);
+}
+
+/* Without extension.*/
+char *get_filename(const char *path)
+{
+	char *p1 = stringf(path), *p2;
+	bool met_dot = false;
+	for (p2 = p1 + strlen(p1) - 1; p2 >= p1 && *p2 != '\\'; p2--) {
+		if (!met_dot && *p2 == '.') {
+			met_dot = true;
+			*p2 = '\0';
+		}
+	}
+	return p2 + 1;
+}

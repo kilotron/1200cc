@@ -9,7 +9,6 @@
 #define SPILL_GLOBAL 0x4
 #define SPILL_ALL (SPILL_LOCAL | SPILL_PARAM | SPILL_GLOBAL)
 
-// is_constant(Reg *r, int *value);
 extern bool live_variable_analysis_ON;
 extern bool saved_reg_alloc_ON;
 static int offset_of_first_var_in_stack_from_fp;	// always non-negative.
@@ -197,7 +196,9 @@ static void load_reg(int reg_num, Symbol *symbol)
 
 /* If symbol s is variable int or char(not array or constant),
    s is in a register and has newest value in
-   register but not in memory, write it back to memory. */
+   register but not in memory, write it back to memory.
+   flag: SPILL_LOCAL, SPILL_PARAM, SPILL_GLOBAL, SPILL_ALL
+   */
 static void spill_reg(Symbol *s, int flag)
 {
 	if (s != NULL && (s->type->type == TYPE_INT || s->type->type == TYPE_CHAR)
@@ -378,6 +379,10 @@ static void get_lhs_reg(Reg *r, IR *t)
 			}
 		}
 		if (success) {
+			// globals should be written back before unallocated.
+			if (!(s->flag & SYMBOL_LOCAL)) {
+				spill_reg(s, SPILL_GLOBAL);
+			}
 			s->addr_des.in_reg = false;
 			reg_num = s->addr_des.reg_num;
 			s->addr_des.reg_num = 0;
@@ -396,7 +401,6 @@ static void get_lhs_reg(Reg *r, IR *t)
 			goto get_lhs_reg_exit;
 		}
 
-	/* All temporary registers are in use. TODO: 改用好一点的方法。*/
 	r->rn = spill;
 	alloc_forced(r->rn, r->symbol);
 	spill = (spill + 1) % (REG_T7 - REG_T0 + 1) + REG_T0;
@@ -804,12 +808,6 @@ static void ir2mips(IR *t, BB *bb, bool end_of_bb)
 		if (is_main_func)
 			emit("addi $fp, $sp, -4"); // no one setup fp for main, so main has to to this itself
 		emit("addiu $sp, $sp, %d", -(offset + env->offset));
-		
-		for (int i = 0; i < reg_des->saved_reg->values->len; i++) {
-			Symbol *symbol = vec_get(reg_des->saved_reg->values, i);
-			if (symbol->addr_des.reg_num)	// redundant
-				load_reg(symbol->addr_des.reg_num, symbol);
-		}
 		break;
 	case IR_RETURN:
 		get_reg(t, true);

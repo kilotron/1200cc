@@ -1,42 +1,42 @@
 #include "1200cc.h"
 #include <direct.h>
 #include <time.h>
-#define PATH_LEN 256
 
+/* Variable error_in_program may be set to true during syntax analysis
+   or semantic analysis if error exists. Its inital value is false. */
 bool error_in_program = false;
+
+/* When live_variable_analysis_ON is true, registers allocated to variables
+   that are not live at a certain point of program will be freed. 
+   Live variable analysis is always executed during compilation. This option
+   is used for better register allocation purpose.*/
 bool live_variable_analysis_ON = true;
+
+/* Constant expressions will be evaluated at compile time if constant_folding_ON
+   is true. Expressions with constants and variables(or function call) will be 
+   partially evaluated.
+   Note that simple constant expressions such as a = 1 + 2 will be evaluated even
+   if constant_folding_ON is false.*/
 bool constant_folding_ON = true;
+
+/* If saved_reg_alloc_ON is true, saved registers are allocated applying register-
+   interference-graph and graph coloring algorithm. Live-variable analysis is
+   required. If saved_reg_alloc_ON is false, saved registers are allocated to the 
+   first 8 variables in a function.*/
 bool saved_reg_alloc_ON = true;
+
+/* When l2r_order_of_eval is true, evaluation order of function parameters
+   and arithmetic(+-/*) expressions is from left to right.
+
+   Note that order of evaluation matters only when global variable is in
+   an expression. When an expression does not consist of pure globals,
+   to minimize the cost, the true order of evaluation may not be from left
+   to right. However, globals are cached so that the result looks as if the
+   evaluation order is from left to right.*/
+bool l2r_order_of_eval = true;
+
+/* Output comment on allocating saved registers in mips assembly.*/
 bool comment_ON = false;
-
-char *get_dir(const char *path)
-{
-	char *p = stringf("%s", path);
-	char cwd[PATH_LEN];
-	int i;
-	for (i = strlen(p) - 1; i >= 0; i--)
-		if (p[i] == '\\') {
-			p[i+1] = '\0';
-			return p;
-		}
-	// if path is a relative path
-	_getcwd(cwd, PATH_LEN);
-	return stringf("%s\\", cwd);
-}
-
-/* Without extension.*/
-char *get_filename(const char *path)
-{
-	char *p1 = stringf(path), *p2;
-	bool met_dot = false;
-	for (p2 = p1 + strlen(p1) - 1; p2 >= p1 && *p2 != '\\'; p2--) {
-		if (!met_dot && *p2 == '.') {
-			met_dot = true;
-			*p2 = '\0';
-		}
-	}
-	return p2+1;
-}
 
 int main()
 {
@@ -62,12 +62,13 @@ int main()
 
 		prog = partition_program(ir);
 
-		//basic_block_demo(prog, "basic_block_orig.txt");
+		char *p = stringf("%s%s_basic_block_orig_%X.txt", get_dir(path), get_filename(path), id);
+		//basic_block_demo(prog, p);
 
 		optimization(prog);
 
-		char *p = stringf("%s%s_basic_block_optd_%X.txt", get_dir(path), get_filename(path), id);
-		//basic_block_demo(prog, p);
+		p = stringf("%s%s_basic_block_optd_%X.txt", get_dir(path), get_filename(path), id);
+		basic_block_demo(prog, p);
 
 		//gen_success = gen_mips(prog, target_path, PRINT_TO_CONSOLE | PRINT_TO_FILE);
 		gen_success = gen_mips(prog, target_path, PRINT_TO_FILE);

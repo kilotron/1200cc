@@ -14,6 +14,7 @@ static void gen_main_func(Node *node);
 static Reg * gen_expr(Node *node);
 static void gen_stmt(Node *node);
 static void merge_labels();
+extern bool l2r_order_of_eval;
 
 Vector * gen_ir(Program_AST *prog)
 {
@@ -102,6 +103,13 @@ static Reg * gen_expr_arg(Node *node)
 		else {
 			arg = new_reg(REG_VAR);
 			arg->symbol = node->symbol;
+			// left to right order of evaluation
+			// the order matters only when symbol is a global variable
+			if (l2r_order_of_eval && !(node->symbol->flag & SYMBOL_LOCAL)) {
+				Reg *result = new_reg(REG_TEMP);
+				emit('+', arg, NULL, result);
+				arg = result;
+			}
 		}
 		arg->is_char = !node->with_paren && eq_oneof(2, arg->symbol->type->type, TYPE_CHAR, TYPE_CONST_CHAR);
 		break;
