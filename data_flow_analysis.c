@@ -46,9 +46,11 @@ static void mark_leaders(Vector *ir, int start, int end)
 		else if (t->op == IR_FUNC_CALL) {
 			// each procedure call starts a new basic block
 			t2 = vec_get(ir, j + 1);
-			if (t2->op == IR_ASSIGN && t2->arg1 == t->result)
+			if ((t2->op == IR_ASSIGN && t2->arg1 == t->result)
+				|| (t2->op == IR_RETURN && t2->arg1 && t2->arg1 == t->result))
 				t2 = vec_get(ir, j + 2);	//function always ends with a ret, so t2!=NULL
-			t2->is_leader = true;
+			if (t2 != NULL)
+				t2->is_leader = true;
 		}
 	}
 }
@@ -472,8 +474,29 @@ void print_regs_of_bb(BB *bb, int print_option)
 	fprintf(fp, "\n+------------------+\nBB end\n\n");
 }
 
+void reset_data_flow(Program *prog)
+{
+	for (int i = 0; i < prog->funcs->len; i++) {
+		Vector *func_of_bb = vec_get(prog->funcs, i);
+		for (int j = 0; j < func_of_bb->len; j++) {
+			BB *bb = vec_get(func_of_bb, j);
+			bb->def = new_vec();
+			bb->use = new_vec();
+			bb->out_regs = new_vec();
+			bb->in_regs = new_vec();
+			for (int k = 0; k < bb->ir->len; k++) {
+				IR *t = vec_get(bb->ir, k);
+				t->next_use = new_vec();
+				t->out = new_vec();
+				t->def = new_vec();
+			}
+		}
+	}
+}
+
 void data_flow_analysis(Program *prog)
 {
+	reset_data_flow(prog);
 	get_pred_and_succ_of_bb(prog);
 	compute_use_def(prog);
 	live_variable_analysis(prog);

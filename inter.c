@@ -42,6 +42,7 @@ static Reg *new_reg(int type)
 	Symbol *symbol;
 	r->type = type;
 	r->is_char = false;
+	r->is_return_value = false;
 	/* allocate reg num only for temporary variables.  */
 	if (type == REG_TEMP) {
 		r->vn = n_regs++;
@@ -57,10 +58,11 @@ static Reg *new_reg(int type)
 	return r;
 }
 
-static IR * new_ir(int op) {
+IR * new_ir(int op) {
 	IR *i = calloc(1, sizeof(IR));
 	i->op = op;
 	i->is_leader = false;
+	i->is_return_value = false;
 	i->next_use = new_vec();
 	i->def = new_vec();
 	i->out = new_vec();
@@ -143,6 +145,7 @@ static Reg * gen_expr(Node *node)
 	Reg *arg1 = NULL;
 	Reg *arg2 = NULL;
 	Reg *result;
+	IR *t;
 	int op;
 	if (node->op != NULL)
 		op = node->op->type;	// both are ascii value.
@@ -154,7 +157,8 @@ static Reg * gen_expr(Node *node)
 	if (node->right != NULL) {
 		arg2 = gen_expr_arg(node->right);
 	}
-	emit(op, arg1, arg2, result);
+	t = emit(op, arg1, arg2, result);
+	t->token = node->op;
 	return result;
 }
 

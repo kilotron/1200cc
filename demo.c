@@ -281,7 +281,7 @@ static void print_basic_block(FILE *fp, BB *bb)
 	fprintf(fp, "out_regs:\n");
 	for (int i = 0; i < bb->out_regs->len; i++) {
 		Symbol *s = vec_get(bb->out_regs, i);
-		fprintf(fp, "%5s ", s->name);
+		fprintf(fp, "%s ", s->name);
 	}
 	fprintf(fp, "\n");
 	fprintf(fp, "+------------------+\nBB end\n\n");
@@ -297,6 +297,7 @@ void basic_block_demo(Program *prog, char *path)
 		fprintf(stderr, "Cannot open file %s.\n", path);
 		exit(-1);
 	}
+	//fp = stdout;
 	for (int i = 0; i < prog->funcs->len; i++) {
 		func_of_bb = vec_get(prog->funcs, i);
 		for (int j = 0; j < func_of_bb->len; j++)

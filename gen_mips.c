@@ -30,9 +30,8 @@ bool is_leaf;		// to keep track of function calls
 
 static void print_env(Env *env)
 {
-	Vector_Iterator *itr = vec_itr(env->symbols->keys);
-	while (vec_has_next(itr)) {
-		char *key = vec_next(itr);
+	for (int i = 0; i < env->symbols->keys->len; i++) {
+		char *key = vec_get(env->symbols->keys, i);
 		Symbol *s = map_get(env->symbols, key);
 		printf("name: %s, offset: %d\n", key, s->offset);
 	}
@@ -346,6 +345,11 @@ static void get_rhs_reg(Reg *r, bool load_constant)
 /* This register is going to be modified.*/
 static void get_lhs_reg(Reg *r, IR *t)
 {
+	if (r->is_return_value) {
+		r->rn = REG_V0;
+		return;
+	}
+
 	// assert t->symbol->type->type is int or char 
 	if (r->symbol->addr_des.reg_num) {
 		r->rn = r->symbol->addr_des.reg_num;
@@ -579,8 +583,15 @@ static void gen_arith(IR *t)
 		return;
 	}
 	// two operands
-	if (t->arg1->type == REG_NUM && t->arg2->type == REG_NUM) 
-		emit("li %s, %d", reg(t->result), arith_result(t->op, t->arg1->value, t->arg2->value));
+	if (t->arg1->type == REG_NUM && t->arg2->type == REG_NUM) {
+		if (t->op == IR_DIV && t->arg2->value == 0) {
+			warningf(t->token, "division by zero");
+			emit("li %s, 0", reg(t->result));
+		} 
+		else{
+			emit("li %s, %d", reg(t->result), arith_result(t->op, t->arg1->value, t->arg2->value));
+		}
+	}
 	else if (t->arg1->type == REG_NUM && t->arg2->type != REG_NUM) {
 		if (t->op == IR_DIV) {
 			emit("li $t9, %d", t->arg1->value);
@@ -592,8 +603,12 @@ static void gen_arith(IR *t)
 		if (t->op == IR_SUB)
 			emit("negu %s, %s", reg(t->result), reg(t->result));
 	}
-	else if (t->arg1->type != REG_NUM && t->arg2->type == REG_NUM) 
+	else if (t->arg1->type != REG_NUM && t->arg2->type == REG_NUM) {
+		if (t->op == IR_DIV && t->arg2->value == 0) {
+			warningf(t->token, "division by zero");
+		}
 		emit("%s %s, %s, %d", arith_instr(t->op, true), reg(t->result), reg(t->arg1), t->arg2->value);
+	}
 	else 
 		emit("%s %s, %s, %s", arith_instr(t->op, false), reg(t->result), reg(t->arg1), reg(t->arg2));
 }
@@ -810,12 +825,19 @@ static void ir2mips(IR *t, BB *bb, bool end_of_bb)
 		emit("addiu $sp, $sp, %d", -(offset + env->offset));
 		break;
 	case IR_RETURN:
-		get_reg(t, true);
+		if (t->arg1) {
+			if (t->arg1->type == REG_NUM) {
+				emit("li $v0, %d", t->arg1->value);
+			}
+			else if (t->arg1->type == REG_VAR){
+				get_reg(t, false);
+				emit("move $v0, %s", reg(t->arg1));
+			}
+		}
 		offset = OFF_FIRST_SAVED_REG;
 		load_params_at_end_of_bb(bb->out_regs);
 		flush_temp_reg(bb->out_regs, FLUSH_GLOBAL | FLUSH_LOCAL | LOCAL_NOT_SPILL);
-		if (t->arg1)
-			emit("move $v0, %s", reg(t->arg1));
+		
 		if (!is_main_func && !is_leaf)
 			emit("lw $ra, -4($fp)");
 		for (int i = 0; i < reg_des->saved_reg->keys->len; i++) {
@@ -886,7 +908,7 @@ static void ir2mips(IR *t, BB *bb, bool end_of_bb)
 
 		load_params_at_end_of_bb(bb->out_regs);
 
-		if (t->result && vec_is_in(bb->out_regs, t->result->symbol)) {
+		if (!t->is_return_value && t->result && vec_is_in(bb->out_regs, t->result->symbol)) {
 			get_lhs_reg(t->result, t);
 			emit("move %s, $v0", reg(t->result));
 		}

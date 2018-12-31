@@ -17,6 +17,15 @@ static void merge_redundant_assignment(Program *prog)
 
 			for (int k = 1; k < bb->ir->len; k++) {
 				latter = vec_get(bb->ir, k);
+
+				if (eq_oneof(6, former->op, '+', '-', '*', '/', IR_ARR_ACCESS, IR_FUNC_CALL)
+					&& latter->op == IR_RETURN && former->result && latter->arg1
+					&& former->result == latter->arg1
+					&& former->result->symbol->flag & SYMBOL_TEMP) {
+					former->is_return_value = true; // remove later
+					former->result->is_return_value = true;
+				}
+
 				if (eq_oneof(6, former->op, '+', '-', '*', '/', IR_ARR_ACCESS, IR_FUNC_CALL)
 					&& latter->op == IR_ASSIGN && former->result 
 					&& former->result == latter->arg1
@@ -54,7 +63,12 @@ static void evaluate_constant_expressions(Program *prog)
 						case '+': value = t->arg1->value + t->arg2->value; break;
 						case '-': value = t->arg1->value - t->arg2->value; break;
 						case '*': value = t->arg1->value * t->arg2->value; break;
-						case '/': value = t->arg1->value / t->arg2->value; break;
+						case '/': 
+							if (t->arg2->value == 0) {
+								// warningf(t->token, "division by zero");
+								continue;
+							}
+							value = t->arg1->value / t->arg2->value; break;
 						}
 						t->result->type = REG_NUM;
 						t->result->value = value;
@@ -81,7 +95,7 @@ typedef struct {
 	Vector *adj;	// vector of RIG_Node*
 } RIG_Node;	// register interference graph
 
-RIG_Node * get_node_in_graph(Vector *nodes, Symbol *s) {
+static RIG_Node * get_node_in_graph(Vector *nodes, Symbol *s) {
 	RIG_Node *node;
 	for (int i = 0; i < nodes->len; i++) {
 		node = vec_get(nodes, i);
@@ -229,14 +243,343 @@ static void alloc_saved_reg(Program *prog) {
 	}
 }
 
-void test(Program *prog)
+typedef struct DAG_Node DAG_Node;
+typedef struct DAG_Node {
+	int op;			// 0 for leaf
+	DAG_Node *left;
+	DAG_Node *right;
+	Vector *parents;// parent nodes, of type DAG_Node *
+	Reg *leaf_reg;	// identifier or constant of leaf node
+	bool is_killed;	// array access node may be killed
+	Vector *regs;	// list of identifiers attached to this node
+	Reg *reg;		// identifier for which TAC has been generated
+
+	bool in_queue;
+} DAG_Node;
+
+/* Generate a string represent this identifer or constant. */
+static char *get_key(Reg *r)
 {
+	char *key;
+	if (r->type == REG_NUM) {
+		key = stringf("%d", r->value);
+	}
+	else { // REG_VAR or REG_TEMP
+		key = r->symbol->name;
+	}
+	return key;
+}
+
+/* Search node for identifier(or constant) in node_list, if the node is found 
+   returns the node else returns NULL. */
+static DAG_Node *get_leaf_node(Map *node_list, Reg *r)
+{
+	char *key = get_key(r);
+	DAG_Node *n = map_get(node_list, key);
+	return n;
+}
+
+/* Pre-conditions: node for r is not found in node_list.
+   Make a node for r and add it to the graph and node_list.*/
+static DAG_Node * make_leaf_node(Vector *nodes, Map *node_list, Reg *r)
+{
+	char *key = get_key(r);
+	DAG_Node *n = calloc(1, sizeof(DAG_Node));
+	n->parents = new_vec();
+	n->leaf_reg = r;
+	n->reg = r;
+	n->is_killed = false;
+	n->regs = new_vec();
+	vec_put(nodes, n);
+	map_put(node_list, key, n);
+	return n;
+}
+
+/* Search an interior node in graph. A killed node should not be returned. */
+static DAG_Node *get_interior_node(Vector *nodes, int op, DAG_Node *left, DAG_Node *right)
+{
+	if (op == IR_ASSIGN_ARR)
+		return NULL;	// case for: a[i] = t;b[i] = t; 
+	for (int i = 0; i < nodes->len; i++) {
+		DAG_Node *n = vec_get(nodes, i);
+		if (n->op == op && n->left == left && n->right == right && !n->is_killed)
+			return n;
+	}
+	return NULL;
+}
+
+/* Add an interior node to DAG. If this node is an array assignment, kill nodes
+   related to this node in graph.*/
+static DAG_Node * make_interior_node(Vector *nodes, IR *t, DAG_Node *left, DAG_Node *right)
+{
+	DAG_Node *interior_node = calloc(1, sizeof(DAG_Node));
+
+	interior_node->op = t->op;
+	interior_node->parents = new_vec();
+	interior_node->left = left;
+	interior_node->right = right;
+	interior_node->is_killed = false;
+	interior_node->regs = new_vec();
+	vec_put(left->parents, interior_node);
+	if (right)
+		vec_put(right->parents, interior_node);
+	vec_put(nodes, interior_node);
+
+	if (t->op == IR_ASSIGN_ARR) {
+		for (int i = 0; i < nodes->len; i++) {
+			DAG_Node *n = vec_get(nodes, i);
+			if (n->op == IR_ARR_ACCESS
+				&& n->left->leaf_reg->symbol == t->result->symbol)
+				n->is_killed = true;
+		}
+	}
+	return interior_node;
+}
+
+/* Pre-conditions: ir contains only arithmetic, array access or array
+   assignment TAC. */
+static Vector * DAG(Vector *ir)
+{
+	Map *node_list = new_map();
+	Vector *nodes = new_vec();	// nodes in graph
+	DAG_Node *left_node = NULL, *right_node = NULL, *interior_node = NULL;
+	DAG_Node *node_prev;
+
+	for (int i = 0; i < ir->len; i++) {
+		IR *t = vec_get(ir, i);
+		right_node = NULL;
+		if ((left_node = get_leaf_node(node_list, t->arg1)) == NULL)
+			left_node = make_leaf_node(nodes, node_list, t->arg1);
+		if (t->arg2) {
+			if ((right_node = get_leaf_node(node_list, t->arg2)) == NULL)
+				right_node = make_leaf_node(nodes, node_list, t->arg2);
+		}
+		interior_node = get_interior_node(nodes, t->op, left_node, right_node);
+		if (interior_node == NULL) {
+			interior_node = make_interior_node(nodes, t, left_node, right_node);
+		}
+		vec_put(interior_node->regs, t->result);
+		if (t->op == IR_ASSIGN_ARR) {
+			continue;	// do not add array assignment to node_list
+		}
+		// update node_list
+		node_prev = map_get(node_list, get_key(t->result));
+		if (node_prev) // t->result is in node_prev->regs
+			vec_remove_elem(node_prev->regs, t->result);
+		map_put(node_list, get_key(t->result), interior_node);
+	}
+
+	return nodes;
+}
+
+static bool not_all_interior_nodes_in_queue(Vector *nodes)
+{
+	for (int i = 0; i < nodes->len; i++) {
+		DAG_Node *n = vec_get(nodes, i);
+		if (n->op != 0 && !n->in_queue) // op == 0: leaf node
+			return true;
+	}
+	return false;
+}
+
+/* If all parents of n is in queue or n has no parents returns true. */
+static bool all_parents_in_queue(DAG_Node *n)
+{
+	for (int i = 0; i < n->parents->len; i++) {
+		DAG_Node *parent = vec_get(n->parents, i);
+		if (!parent->in_queue)
+			return false;
+	}
+	return true;
+}
+
+/* Returns the sequence of computing DAG_Node*. */
+static Vector *get_compute_sequence(Vector *nodes)
+{
+	Vector *queue = new_vec(), *result = new_vec();
+	DAG_Node *n = NULL;
+
+	for (int i = 0; i < nodes->len; i++) {
+		n = vec_get(nodes, i);
+		if (n->op != 0) {
+			vec_put(result, n);
+		}
+	}
+
+	/*// Comment out the following code if the original order of TACs is important.
+	for (int i = 0; i < nodes->len; i++) {
+		n = vec_get(nodes, i);
+		n->in_queue = false;
+	}
+	while (not_all_interior_nodes_in_queue(nodes)) {
+		for (int i = nodes->len - 1; i >= 0; i--) { // don't change the order
+			n = vec_get(nodes, i);
+			if (n->op != 0 && !n->in_queue && all_parents_in_queue(n))
+				break;
+		}
+		
+		vec_put(queue, n);
+		n->in_queue = true;
+		while (n->left && n->left->op != 0) {// n has interior left node
+			n = n->left;
+			n->in_queue = true;
+			vec_put(queue, n);
+		}
+		
+	}
+
+	for (int i = queue->len - 1; i >= 0; i--) {
+		vec_put(result, vec_get(queue, i));
+	}*/
+	
+	return result;
+}
+
+static IR * regen_ir(Vector *ir, int op, Reg *arg1, Reg *arg2, Reg *result)
+{
+	IR *i = new_ir(op);
+	i->arg1 = arg1;
+	i->arg2 = arg2;
+	i->result = result;
+	vec_put(ir, i);
+	return i;
+}
+
+/* Pre-conditions: regs != NULL, bb_out != NULL, len(regs) > 0
+	Return a variable that is live from exit of bb if possible.*/
+static Reg *var_worth_gen_code_for(Vector *regs, Vector *bb_out)
+{
+	Reg *r = NULL;
+	for (int i = 0; i < regs->len; i++) {
+		r = vec_get(regs, i);
+		if (vec_is_in(bb_out, r->symbol) || !(r->symbol->flag & SYMBOL_LOCAL)
+			|| r->is_return_value)
+			return r;
+	}
+	return vec_get(regs, 0);
+}
+
+/* Pre-conditions: regs != NULL, bb_out != NULL, len(regs) > 0
+	Return variables live from exit of bb.*/
+static Vector *vars_need_gen_code_for(Vector *regs, Vector *bb_out)
+{
+	Reg *r = NULL;
+	Vector *result = new_vec();
+	for (int i = 0; i < regs->len; i++) {
+		r = vec_get(regs, i);
+		// live or globals
+		if (vec_is_in(bb_out, r->symbol) || !(r->symbol->flag & SYMBOL_LOCAL)
+			|| r->is_return_value)
+			vec_put(result, r);
+	}
+	return result;
+}
+
+/* Pre-conditions: ir contains only arithmetic, array access or array
+   assignment TAC. 
+   lcse: local common subexpressions*/
+static Vector *regenerate(Vector *ir, Vector *bb_out)
+{
+	Vector *nodes = DAG(ir);
+	Vector *seq = get_compute_sequence(nodes);
+	Vector *ir_result = new_vec();
+	Vector *rest;
+	DAG_Node *node;
+	Reg *arg1, *arg2, *result;
+
+	for (int i = 0; i < seq->len; i++) {
+		node = vec_get(seq, i);
+		arg1 = node->left->reg;
+		arg2 = node->right ? node->right->reg : NULL;
+		result = var_worth_gen_code_for(node->regs, bb_out);
+		regen_ir(ir_result, node->op, arg1, arg2, result);
+		node->reg = result;
+		// generate TAC for rest vars
+		rest = vec_clone(node->regs);
+		vec_remove_elem(rest, result);
+		rest = vars_need_gen_code_for(rest, bb_out);
+		for (int j = 0; j < rest->len; j++) {
+			Reg *r = vec_get(rest, j);
+			regen_ir(ir_result, IR_ASSIGN, result, NULL, r);
+		}
+	}
+	return ir_result;
+}
+
+/* Pre-conditions: data flow analysis is done.*/
+static void eliminate_lcse(Program *prog)
+{
+	extern bool lcse_elimination_ON;
+	if (!lcse_elimination_ON)
+		return;
 	for (int i = 0; i < prog->funcs->len; i++) {
 		Vector *func_of_bb = vec_get(prog->funcs, i);
 		for (int j = 0; j < func_of_bb->len; j++) {
 			BB *bb = vec_get(func_of_bb, j);
-			//print_regs_of_bb(bb, PRINT_DEF | PRINT_USE | PRINT_IN_REGS | PRINT_OUT_REGS);
+			for (int k = 0; k < bb->ir->len; k++) {
+				IR *t = vec_get(bb->ir, k);
+				if (eq_oneof(7, t->op, '+', '-', '*', '/', IR_ARR_ACCESS,
+					IR_ASSIGN_ARR, IR_ASSIGN)) {
+
+					Vector *cand = new_vec();
+					Vector *regen_code;
+					int start_index = k, end_index;
+
+					for (; k < bb->ir->len; k++) {
+						t = vec_get(bb->ir, k);
+						if (!eq_oneof(7, t->op, '+', '-', '*', '/', IR_ARR_ACCESS,
+							IR_ASSIGN_ARR, IR_ASSIGN)) {
+							break;
+						}
+						vec_put(cand, t);
+					}
+					end_index = k - 1;
+
+					while (start_index <= end_index) {
+						vec_remove(bb->ir, start_index);
+						end_index--;
+					}
+
+					regen_code = regenerate(cand, bb->out_regs);
+
+					for (int j = 0; j < regen_code->len; j++) {
+						IR *t = vec_get(regen_code, j);
+						vec_insert(bb->ir, t, start_index + j);
+					}
+				}
+				
+			}
 		}
+	}
+	// analyze data flow again
+	data_flow_analysis(prog);
+}
+
+/* Pre-conditions: data flow analysis is done.*/
+static void eliminate_dead_code(Program *prog)
+{
+	extern bool dead_code_elimination_ON;
+	if (!dead_code_elimination_ON)
+		return;
+	bool removed =true;
+	while (removed) {
+		removed = false;
+		for (int i = 0; i < prog->funcs->len; i++) {
+			Vector *func_of_bb = vec_get(prog->funcs, i);
+			for (int j = 0; j < func_of_bb->len; j++) {
+				BB *bb = vec_get(func_of_bb, j);
+				for (int k = 0; k < bb->ir->len; k++) {
+					IR *t = vec_get(bb->ir, k);
+					if (!eq_oneof(5, t->op, '+', '-', '*', '/', IR_ASSIGN))
+						continue;
+					if (!vec_is_in(t->out, t->result->symbol)) {
+						vec_remove(bb->ir, k--);
+						removed = true;
+					}
+				}
+			}
+		}
+		data_flow_analysis(prog);
 	}
 }
 
@@ -246,8 +589,9 @@ void optimization(Program * prog)
 		return;
 	merge_redundant_assignment(prog);
 	data_flow_analysis(prog);
+	eliminate_dead_code(prog);
+	eliminate_lcse(prog);
 	evaluate_constant_expressions(prog);
-	//test(prog);
 	alloc_saved_reg(prog);
 }
 

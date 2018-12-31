@@ -15,11 +15,6 @@ typedef struct {
 	int len;		// number of elements in this vector.
 } Vector;
 
-typedef struct {
-	Vector *v;
-	int p;
-} Vector_Iterator;
-
 bool streql(const char * s1, const char * s2);
 bool startswith(char * s1, char * s2);
 
@@ -32,6 +27,7 @@ bool is_in(char *s, char c);
 
 Vector *new_vec();
 void vec_put(Vector *v, void *elem);
+void vec_insert(Vector * v, void * elem, int index);
 void vec_appendv(Vector * v1, Vector * v2);
 Vector * vec_clone(Vector * v);
 void *vec_get(Vector *v, int index);
@@ -43,9 +39,6 @@ void vec_put_if_not_in(Vector * v, void * elem);
 Vector * vec_union(Vector * v1, Vector * v2);
 Vector * vec_except(Vector * v1, Vector * v2);
 bool vec_is_different(Vector * v1, Vector * v2);
-Vector_Iterator * vec_itr(Vector * v);
-bool vec_has_next(Vector_Iterator * itr);
-void * vec_next(Vector_Iterator * itr);
 
 // Map is a struct that maps strings(keys) to values(pointers). 
 // A map cannot contain duplicate keys; each key can map to at most one value.

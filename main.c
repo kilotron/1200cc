@@ -1,5 +1,4 @@
 #include "1200cc.h"
-#include <direct.h>
 #include <time.h>
 
 /* Variable error_in_program may be set to true during syntax analysis
@@ -38,11 +37,16 @@ bool l2r_order_of_eval = true;
 /* Output comment on allocating saved registers in mips assembly.*/
 bool comment_ON = false;
 
+/* Eliminate local common subexpressions. */
+bool lcse_elimination_ON = true;
+
+/* Eliminate code where a variable is assigned a value but never used. */
+bool dead_code_elimination_ON = true;
+
 int main()
 {
 	//char path[PATH_LEN] = "E:\\学习\\大三上\\编译技术\\编译技术课程设计\\测试代码\\测试程序0\\test.c";
 	char path[PATH_LEN];
-	char cwd[PATH_LEN];
 	char *target_path;
 	int id;
 
@@ -54,7 +58,7 @@ int main()
 	Program_AST *prog_ast = parse(tokens);
 	Vector *ir = NULL;
 	Program *prog;
-	bool gen_success;
+	bool gen_success = false;
 	if (prog_ast) {
 		ir = gen_ir(prog_ast);
 
@@ -68,13 +72,12 @@ int main()
 		optimization(prog);
 
 		p = stringf("%s%s_basic_block_optd_%X.txt", get_dir(path), get_filename(path), id);
-		basic_block_demo(prog, p);
+		//basic_block_demo(prog, p);
 
 		//gen_success = gen_mips(prog, target_path, PRINT_TO_CONSOLE | PRINT_TO_FILE);
 		gen_success = gen_mips(prog, target_path, PRINT_TO_FILE);
 
 		if (gen_success) {
-			_getcwd(cwd, PATH_LEN);
 			printf("目标代码输出到%s中。\n", target_path);
 		}
 	}

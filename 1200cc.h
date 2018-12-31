@@ -258,6 +258,7 @@ typedef struct {
 	// to keep track of the type of a (temporary) variable or literal
 	// used in a print statement, may not be consistent elsewhere.
 	bool is_char;
+	bool is_return_value;
 } Reg;
 
 // intermediate representation
@@ -293,6 +294,7 @@ typedef struct {
 	Reg *arg1;
 	Reg *arg2;
 	Reg *result;
+	Token *token;
 	int size;		// for load/store
 
 	int b_label;	// label before this code
@@ -313,6 +315,8 @@ typedef struct {
 	Vector *next_use;	// next-use symbols: variables in arg1, arg2, args and result
 	Vector *def;	// lists the variables that may be assigned a value by the instruction
 	Vector *out;	// variables live at end of this ir, globals excluded.
+
+	bool is_return_value;// not used
 } IR;
 
 typedef struct {
@@ -322,6 +326,7 @@ typedef struct {
 	Node *main_func;
 } Program_AST;
 
+#define REG_V0 2
 #define REG_A0 4
 #define REG_A3 7
 #define REG_T0 8
@@ -371,5 +376,8 @@ bool is_saved_reg(int reg_num);
 
 void optimization(Program * prog);
 void data_flow_analysis(Program *prog);
+void get_next_use_info(Program *prog);
 void print_regs_of_bb(BB *bb, int print_option);
 void print_ir(FILE *fp, IR *t);
+
+IR * new_ir(int op);

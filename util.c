@@ -1,4 +1,5 @@
 #include "util.h"
+#include <direct.h>
 
 bool streql(const char * s1, const char * s2)
 {
@@ -67,6 +68,15 @@ void vec_put(Vector * v, void * elem)
 		v->data = realloc(v->data, sizeof(void *) * v->capacity);
 	}
 	v->data[v->len++] = elem;
+}
+
+void vec_insert(Vector *v, void *elem, int index)
+{
+	vec_put(v, NULL);
+	for (int i = v->len - 1; i > index; i--) {
+		v->data[i] = v->data[i - 1];
+	}
+	v->data[index] = elem;
 }
 
 /* Pre-conditions: v1 != NULL, v2 != NULL
@@ -183,24 +193,6 @@ bool vec_is_different(Vector *v1, Vector *v2)
 	return false;
 }
 
-Vector_Iterator * vec_itr(Vector * v)
-{
-	Vector_Iterator * itr = calloc(1, sizeof(Vector_Iterator));
-	itr->v = v;
-	itr->p = 0;
-	return itr;
-}
-
-bool vec_has_next(Vector_Iterator *itr)
-{
-	return (itr->p < itr->v->len);
-}
-
-void *vec_next(Vector_Iterator *itr)
-{
-	return vec_get(itr->v, itr->p++);
-}
-
 Map * new_map()
 {
 	Map *map = malloc(sizeof(Map));
@@ -301,6 +293,10 @@ Post-conditions: Return the next character with internal state of src unchanged.
 If pointer p reaches end of the file returns '\0'. */
 char peekc(SrcFile * src)
 {
+	if (*src->p < 0 || *src->p >= 128) {
+		fprintf(stderr, "Ô´´úÂëÖÐº¬·ÇASCII×Ö·û£¬ÇëÉ¾³ý\n");
+		exit(-1);
+	}
 	return *(src->p);
 }
 
