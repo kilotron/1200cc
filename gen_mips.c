@@ -346,8 +346,9 @@ static void get_rhs_reg(Reg *r, bool load_constant)
 static void get_lhs_reg(Reg *r, IR *t)
 {
 	if (r->is_return_value) {
+		r->symbol->addr_des.reg_num = REG_V0;
 		r->rn = REG_V0;
-		return;
+		goto get_lhs_reg_exit;
 	}
 
 	// assert t->symbol->type->type is int or char 
@@ -829,10 +830,6 @@ static void ir2mips(IR *t, BB *bb, bool end_of_bb)
 			if (t->arg1->type == REG_NUM) {
 				emit("li $v0, %d", t->arg1->value);
 			}
-			else if (t->arg1->type == REG_VAR){
-				get_reg(t, false);
-				emit("move $v0, %s", reg(t->arg1));
-			}
 		}
 		offset = OFF_FIRST_SAVED_REG;
 		load_params_at_end_of_bb(bb->out_regs);
@@ -908,7 +905,7 @@ static void ir2mips(IR *t, BB *bb, bool end_of_bb)
 
 		load_params_at_end_of_bb(bb->out_regs);
 
-		if (!t->is_return_value && t->result && vec_is_in(bb->out_regs, t->result->symbol)) {
+		if (t->result && !(t->result->is_return_value)) {
 			get_lhs_reg(t->result, t);
 			emit("move %s, $v0", reg(t->result));
 		}

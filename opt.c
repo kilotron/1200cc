@@ -19,14 +19,6 @@ static void merge_redundant_assignment(Program *prog)
 				latter = vec_get(bb->ir, k);
 
 				if (eq_oneof(6, former->op, '+', '-', '*', '/', IR_ARR_ACCESS, IR_FUNC_CALL)
-					&& latter->op == IR_RETURN && former->result && latter->arg1
-					&& former->result == latter->arg1
-					&& former->result->symbol->flag & SYMBOL_TEMP) {
-					former->is_return_value = true; // remove later
-					former->result->is_return_value = true;
-				}
-
-				if (eq_oneof(6, former->op, '+', '-', '*', '/', IR_ARR_ACCESS, IR_FUNC_CALL)
 					&& latter->op == IR_ASSIGN && former->result 
 					&& former->result == latter->arg1
 					&& former->result->symbol->flag & SYMBOL_TEMP) {
@@ -37,6 +29,34 @@ static void merge_redundant_assignment(Program *prog)
 				else {
 					former = latter;
 				}
+			}
+		}
+	}
+}
+
+static void identify_return_value(Program *prog)
+{
+	IR *former, *latter;
+	for (int i = 0; i < prog->funcs->len; i++) {
+		Vector *func_of_bb = vec_get(prog->funcs, i);
+		for (int j = 0; j < func_of_bb->len; j++) {
+			BB *bb = vec_get(func_of_bb, j);
+			former = vec_get(bb->ir, 0);
+			if (former == NULL)	// empty bb
+				continue;
+
+			for (int k = 1; k < bb->ir->len; k++) {
+				latter = vec_get(bb->ir, k);
+
+				if (eq_oneof(6, former->op, '+', '-', '*', '/', IR_ARR_ACCESS, IR_FUNC_CALL)
+					&& latter->op == IR_RETURN && former->result && latter->arg1
+					&& former->result->symbol == latter->arg1->symbol){
+					//&& former->result->symbol->flag & SYMBOL_LOCAL) {
+					//&& former->result->symbol->flag & SYMBOL_TEMP) {
+					former->is_return_value = true; // remove later
+					former->result->is_return_value = true;
+				}
+				former = latter;
 			}
 		}
 	}
@@ -572,7 +592,8 @@ static void eliminate_dead_code(Program *prog)
 					IR *t = vec_get(bb->ir, k);
 					if (!eq_oneof(5, t->op, '+', '-', '*', '/', IR_ASSIGN))
 						continue;
-					if (!vec_is_in(t->out, t->result->symbol)) {
+					if (!vec_is_in(t->out, t->result->symbol) 
+						&& (t->result->symbol->flag & SYMBOL_LOCAL)) {
 						vec_remove(bb->ir, k--);
 						removed = true;
 					}
@@ -588,6 +609,7 @@ void optimization(Program * prog)
 	if (prog == NULL)
 		return;
 	merge_redundant_assignment(prog);
+	identify_return_value(prog);
 	data_flow_analysis(prog);
 	eliminate_dead_code(prog);
 	eliminate_lcse(prog);
