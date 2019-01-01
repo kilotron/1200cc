@@ -495,10 +495,15 @@ static Vector *vars_need_gen_code_for(Vector *regs, Vector *bb_out)
 	return result;
 }
 
+static Vector *vars_not_gen_code_for(Vector *regs, Vector *bb_out)
+{
+	return vec_except(regs, vars_need_gen_code_for(regs, bb_out));
+}
+
 /* Pre-conditions: ir contains only arithmetic, array access or array
    assignment TAC. 
    lcse: local common subexpressions*/
-static Vector *regenerate(Vector *ir, Vector *bb_out)
+static Vector *regenerate(Vector *ir, BB *bb)
 {
 	Vector *nodes = DAG(ir);
 	Vector *seq = get_compute_sequence(nodes);
@@ -511,16 +516,39 @@ static Vector *regenerate(Vector *ir, Vector *bb_out)
 		node = vec_get(seq, i);
 		arg1 = node->left->reg;
 		arg2 = node->right ? node->right->reg : NULL;
-		result = var_worth_gen_code_for(node->regs, bb_out);
+
+		result = var_worth_gen_code_for(node->regs, bb->out_regs);
 		regen_ir(ir_result, node->op, arg1, arg2, result);
 		node->reg = result;
+
 		// generate TAC for rest vars
 		rest = vec_clone(node->regs);
 		vec_remove_elem(rest, result);
-		rest = vars_need_gen_code_for(rest, bb_out);
+		rest = vars_need_gen_code_for(rest, bb->out_regs);
 		for (int j = 0; j < rest->len; j++) {
 			Reg *r = vec_get(rest, j);
 			regen_ir(ir_result, IR_ASSIGN, result, NULL, r);
+		}
+
+		// 替换没有生成代码的变量
+		rest = vars_not_gen_code_for(node->regs, bb->out_regs);
+		for (int j = 0; j < rest->len; j++) {
+			Reg *r = vec_get(rest, j);
+			for (int k = 0; k < bb->ir->len; k++) {
+				IR *t = vec_get(bb->ir, k);
+				if (t->arg1 && t->arg1->symbol == r->symbol)
+					t->arg1 = result;
+				if (t->arg2 && t->arg2->symbol == r->symbol)
+					t->arg2 = result;
+				if (t->op != IR_READ) {
+					for (int l = 0; l < t->num_args; l++) {
+						Reg *arg = vec_get(t->args, l);
+						if (arg->symbol == r->symbol) {
+							t->args->data[l] = result;
+						}
+					}
+				}
+			}
 		}
 	}
 	return ir_result;
@@ -560,7 +588,7 @@ static void eliminate_lcse(Program *prog)
 						end_index--;
 					}
 
-					regen_code = regenerate(cand, bb->out_regs);
+					regen_code = regenerate(cand, bb);
 
 					for (int j = 0; j < regen_code->len; j++) {
 						IR *t = vec_get(regen_code, j);

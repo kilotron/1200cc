@@ -72,7 +72,7 @@ int main()
 		optimization(prog);
 
 		p = stringf("%s%s_basic_block_optd_%X.txt", get_dir(path), get_filename(path), id);
-		//basic_block_demo(prog, p);
+		basic_block_demo(prog, p);
 
 		//gen_success = gen_mips(prog, target_path, PRINT_TO_CONSOLE | PRINT_TO_FILE);
 		gen_success = gen_mips(prog, target_path, PRINT_TO_FILE);
