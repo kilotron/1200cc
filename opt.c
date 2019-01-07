@@ -531,6 +531,8 @@ static Vector *regenerate(Vector *ir, BB *bb)
 		}
 
 		// 替换没有生成代码的变量
+		rest = vec_clone(node->regs);
+		vec_remove_elem(rest, result);
 		rest = vars_not_gen_code_for(rest, bb->out_regs);
 		for (int j = 0; j < rest->len; j++) {
 			Reg *r = vec_get(rest, j);

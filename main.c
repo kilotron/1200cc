@@ -45,12 +45,23 @@ bool dead_code_elimination_ON = true;
 
 bool output_newline = true;
 
+void opt_off()
+{
+	live_variable_analysis_ON = false;
+	constant_folding_ON = false;
+	saved_reg_alloc_ON = false;
+	lcse_elimination_ON = false;
+	dead_code_elimination_ON = false;
+}
+
 int main()
 {
 	char path[PATH_LEN];
 	char *target_path;
 	char *p;
 	int id;
+
+	//opt_off();
 
 	scanf("%[^\n]", path);
 	id = (int)time(NULL) % 65536;
