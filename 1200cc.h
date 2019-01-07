@@ -364,6 +364,7 @@ Program_AST *new_program();
 Program_AST * parse(Vector *_tokens);
 Vector * gen_ir(Program_AST *prog);
 void ir_demo(Vector *ir, char * path, int print_option);
+void inter_demo(Program *prog, char * path, int print_option);
 void basic_block_demo(Program *prog, char *path);
 Program * partition_program(Vector *ir);
 bool gen_mips(Program *prog, char *path, int flag);
@@ -379,5 +380,4 @@ void data_flow_analysis(Program *prog);
 void get_next_use_info(Program *prog);
 void print_regs_of_bb(BB *bb, int print_option);
 void print_ir(FILE *fp, IR *t);
-
 IR * new_ir(int op);

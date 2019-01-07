@@ -23,9 +23,7 @@ static void move();
 static void move_step(int step);
 static bool match(int type);
 static Token *lookahead(int i);
-static void test(TypeSet *expected, TypeSet *tol);
 static void skip_to(TypeSet *to);
-static void skip_to_next_stmt();
 static Program_AST * program();
 static Node * const_decl(bool is_local);
 static Vector * const_def(bool is_local);
@@ -132,6 +130,7 @@ static Symbol * assert_decld_id(Token *token)
 		else if (look->type == '[') {
 			type = new_type(TYPE_ARRAY);
 			type->array_of = new_type(TYPE_INT);
+			type->len = 1000;
 		}
 		symbol = new_symbol(token->lexeme, type);
 		enter_symbol(token, symbol);
@@ -184,23 +183,6 @@ static bool match(int type)
 	}
 }
 
-/* kind of like treat or trick.
-match -> return true
-skip -> return false.*/
-static bool match_or_skip(int type, TypeSet *ty_set)
-{
-	if (look->type == type) {
-		move();
-		return true;
-	}
-	else {
-		errorf(look, "%s is expected before %s", type2str(type), type2str(look->type));
-		if (ty_set != NULL)
-			skip_to(ty_set);
-		return false;
-	}
-}
-
 /* Pre-conditions: 1 <= i.
 Post-conditions: 
 lookhead(0) is look; lookahead(1) is the token after look.
@@ -212,16 +194,6 @@ static Token *lookahead(int i)
 	return t == NULL ? vec_get(tokens, tokens->len - 1) : t;
 }
 
-/* Pre-conditions: expected != NULL, tol != NULL.(tol is tolerance)
-Post-condition: If the type of next token is in TypeSet expected do nothing,
-else skip some tokens until the type of a token T if in Set tol, 
-and set look to the token after T.*/
-static void test(TypeSet *expected, TypeSet *tol)
-{
-	if (!typeset_isin(expected, look->type))
-		skip_to(typeset_union(expected, tol));
-}
-
 /* Pre-conditions: to != NULL.
 Post-conditions: Token look is in TypeSet to or look->type is TK_EOF.*/
 static void skip_to(TypeSet *to)
@@ -229,13 +201,6 @@ static void skip_to(TypeSet *to)
 	while (!typeset_isin(to, look->type) && look->type != TK_EOF) {
 		move();
 	}
-}
-
-static void skip_to_next_stmt()
-{
-	TypeSet *to = new_typeset(13, TK_IF, TK_WHILE, TK_FOR, TK_LBRACE, TK_ID,
-		TK_PRINTF, TK_SCANF, TK_RETURN, TK_RBRACE, TK_SC);
-	skip_to(to);
 }
 
 static void skip_to_end_of_block_or_stmt()
@@ -263,13 +228,13 @@ static void skip_to_end_of_block_or_stmt()
 				move();
 				return;
 			}
-		case '{': case '(':
+		case '{': //case '(':
 			// roughly tracking matching symbol
 			nesting_depth++;
 			break;
-		case ')':
-			nesting_depth--;
-			break;
+		//case ')':
+		//	nesting_depth--;
+		//	break;
 		}
 
 		move();
@@ -780,7 +745,7 @@ static Node * main_func()
 	}
 	else {
 		error = true;
-		skip_to(new_typeset(1, '{'));
+		//skip_to(new_typeset(1, '{'));
 	}
 	saved_env = top;
 	top = new_env(top);
@@ -1274,12 +1239,12 @@ static Node * assign_stmt()
 		if (symbol->type->type == TYPE_ARRAY) {
 			lhs = new_array_access_node(symbol, index);
 			lhs_type = symbol->type->array_of;
+			array_bound_checking(symbol, token, index);
 		}
 		else {
 			errorf(start, "'%s' is not an array", symbol->name);
 			SEMANTIC_ERROR(error);
 		}
-		array_bound_checking(symbol, token, index);
 	}
 	else {
 		lhs = new_id_node(token, symbol);

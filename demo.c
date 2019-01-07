@@ -304,3 +304,35 @@ void basic_block_demo(Program *prog, char *path)
 			print_basic_block(fp, vec_get(func_of_bb, j));
 	}
 }
+
+void inter_demo(Program *prog, char * path, int print_option)
+{
+	IR *t;
+	FILE *fp = fopen(path, "w");
+	if (fp == NULL) {
+		fprintf(stderr, "Cannot open file %s.\n", path);
+		exit(-1);
+	}
+
+	for (int i = 0; i < prog->global_vars->ir->len; i++) {
+		t = vec_get(prog->global_vars->ir, i);
+		if (print_option & PRINT_TO_CONSOLE)
+			print_ir(stdout, t);
+		if (print_option & PRINT_TO_FILE)
+			print_ir(fp, t);
+	}
+
+	for (int i = 0; i < prog->funcs->len; i++) {
+		Vector *func_of_bb = vec_get(prog->funcs, i);
+		for (int j = 0; j < func_of_bb->len; j++) {
+			BB *bb = vec_get(func_of_bb, j);
+			for (int k = 0; k < bb->ir->len; k++) {
+				t = vec_get(bb->ir, k);
+				if (print_option & PRINT_TO_CONSOLE)
+					print_ir(stdout, t);
+				if (print_option & PRINT_TO_FILE)
+					print_ir(fp, t);
+			}
+		}
+	}
+}

@@ -50,9 +50,9 @@ static void identify_return_value(Program *prog)
 
 				if (eq_oneof(6, former->op, '+', '-', '*', '/', IR_ARR_ACCESS, IR_FUNC_CALL)
 					&& latter->op == IR_RETURN && former->result && latter->arg1
-					&& former->result->symbol == latter->arg1->symbol){
+					&& former->result->symbol == latter->arg1->symbol
 					//&& former->result->symbol->flag & SYMBOL_LOCAL) {
-					//&& former->result->symbol->flag & SYMBOL_TEMP) {
+					&& former->result->symbol->flag & SYMBOL_TEMP) {
 					former->is_return_value = true; // remove later
 					former->result->is_return_value = true;
 				}
@@ -208,11 +208,11 @@ static void assign_reg(RIG_Node *node)
 	for (int i = REG_S0; i <= REG_S7; i++) {
 		if (!assigned[i]) {
 			node->symbol->addr_des.reg_num = i;
-			printf("½«¼Ä´æÆ÷%s·ÖÅä¸ø%s\n", name[i], node->symbol->name);
+			//printf("½«¼Ä´æÆ÷%s·ÖÅä¸ø%s\n", name[i], node->symbol->name);
 			return;
 		}
 	}
-	printf("%sÎ´·ÖÅäµ½¼Ä´æÆ÷\n", node->symbol->name);
+	//printf("%sÎ´·ÖÅäµ½¼Ä´æÆ÷\n", node->symbol->name);
 }
 
 static void alloc_local_var(Vector *func_of_bb)
@@ -637,11 +637,11 @@ void optimization(Program * prog)
 	if (prog == NULL)
 		return;
 	merge_redundant_assignment(prog);
-	identify_return_value(prog);
 	data_flow_analysis(prog);
 	eliminate_dead_code(prog);
 	eliminate_lcse(prog);
 	evaluate_constant_expressions(prog);
+	identify_return_value(prog);
 	alloc_saved_reg(prog);
 }
 

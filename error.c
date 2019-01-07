@@ -72,9 +72,9 @@ static void error_msg(bool is_fatal, Token *t, const char *fmt, va_list _ArgList
 			col++;
 		}
 	}
-
-	fprintf(stderr, "%s:%d:%d: %s: ", src->path, line, col, 
-		is_fatal ? "error" : "warning");
+	
+	fprintf(stderr, "%s:%d:%d: %s: ", get_filename_with_extension(src->path),
+		line, col, is_fatal ? "error" : "warning");
 	vfprintf(stderr, fmt, _ArgList);
 
 	// print out the line containing the error position.

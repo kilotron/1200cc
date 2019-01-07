@@ -38,16 +38,18 @@ bool l2r_order_of_eval = true;
 bool comment_ON = false;
 
 /* Eliminate local common subexpressions. */
-bool lcse_elimination_ON = true;
+bool lcse_elimination_ON = false;
 
 /* Eliminate code where a variable is assigned a value but never used. */
-bool dead_code_elimination_ON = true;
+bool dead_code_elimination_ON = false;
+
+bool output_newline = false;
 
 int main()
 {
-	//char path[PATH_LEN] = "E:\\学习\\大三上\\编译技术\\编译技术课程设计\\测试代码\\测试程序0\\test.c";
 	char path[PATH_LEN];
 	char *target_path;
+	char *p;
 	int id;
 
 	scanf("%[^\n]", path);
@@ -66,13 +68,19 @@ int main()
 
 		prog = partition_program(ir);
 
-		char *p = stringf("%s%s_basic_block_orig_%X.txt", get_dir(path), get_filename(path), id);
-		//basic_block_demo(prog, p);
+		p = stringf("%s%s_basic_block_orig_%X.txt", get_dir(path), get_filename(path), id);
+		basic_block_demo(prog, p);
+
+		p = stringf("%s%s_inter_orig_%X.txt", get_dir(path), get_filename(path), id);
+		//inter_demo(prog, p, PRINT_TO_FILE);
 
 		optimization(prog);
 
 		p = stringf("%s%s_basic_block_optd_%X.txt", get_dir(path), get_filename(path), id);
 		basic_block_demo(prog, p);
+
+		p = stringf("%s%s_inter_optd_%X.txt", get_dir(path), get_filename(path), id);
+		//inter_demo(prog, p, PRINT_TO_FILE);
 
 		//gen_success = gen_mips(prog, target_path, PRINT_TO_CONSOLE | PRINT_TO_FILE);
 		gen_success = gen_mips(prog, target_path, PRINT_TO_FILE);

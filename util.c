@@ -404,3 +404,13 @@ char *get_filename(const char *path)
 	}
 	return p2 + 1;
 }
+
+/* With extension.*/
+char *get_filename_with_extension(const char *path)
+{
+	char *p1 = stringf(path), *p2;
+	for (p2 = p1 + strlen(p1) - 1; p2 >= p1 && *p2 != '\\'; p2--) {
+		;
+	}
+	return p2 + 1;
+}

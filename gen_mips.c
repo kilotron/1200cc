@@ -11,6 +11,7 @@
 
 extern bool live_variable_analysis_ON;
 extern bool saved_reg_alloc_ON;
+extern bool output_newline;
 static int offset_of_first_var_in_stack_from_fp;	// always non-negative.
 static int spill = REG_T0;	// temporary register to spill
 static FILE *fp;
@@ -796,9 +797,11 @@ static void ir2mips(IR *t, BB *bb, bool end_of_bb)
 			emit("move $a0, %s", reg(t->arg1));
 			emit("syscall");
 		}
-		emit("li $v0, 4");
-		emit("la $a0, newline");
-		emit("syscall");
+		if (output_newline) {
+			emit("li $v0, 4");
+			emit("la $a0, newline");
+			emit("syscall");
+		}
 		if (s != NULL && s->flag & SYMBOL_PARAM) {
 			s->addr_des.in_reg = false;
 		}
@@ -829,6 +832,10 @@ static void ir2mips(IR *t, BB *bb, bool end_of_bb)
 		if (t->arg1) {
 			if (t->arg1->type == REG_NUM) {
 				emit("li $v0, %d", t->arg1->value);
+			}
+			else if (t->arg1->type == REG_VAR) {
+				get_reg(t, false);
+				emit("move $v0, %s", reg(t->arg1));
 			}
 		}
 		offset = OFF_FIRST_SAVED_REG;

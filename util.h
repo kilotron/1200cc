@@ -97,4 +97,6 @@ char * get_dir(const char * path);
 
 char * get_filename(const char * path);
 
+char * get_filename_with_extension(const char * path);
+
 
