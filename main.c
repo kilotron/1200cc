@@ -38,12 +38,12 @@ bool l2r_order_of_eval = true;
 bool comment_ON = false;
 
 /* Eliminate local common subexpressions. */
-bool lcse_elimination_ON = false;
+bool lcse_elimination_ON = true;
 
 /* Eliminate code where a variable is assigned a value but never used. */
-bool dead_code_elimination_ON = false;
+bool dead_code_elimination_ON = true;
 
-bool output_newline = false;
+bool output_newline = true;
 
 int main()
 {
@@ -69,7 +69,7 @@ int main()
 		prog = partition_program(ir);
 
 		p = stringf("%s%s_basic_block_orig_%X.txt", get_dir(path), get_filename(path), id);
-		basic_block_demo(prog, p);
+		//basic_block_demo(prog, p);
 
 		p = stringf("%s%s_inter_orig_%X.txt", get_dir(path), get_filename(path), id);
 		//inter_demo(prog, p, PRINT_TO_FILE);
@@ -77,7 +77,7 @@ int main()
 		optimization(prog);
 
 		p = stringf("%s%s_basic_block_optd_%X.txt", get_dir(path), get_filename(path), id);
-		basic_block_demo(prog, p);
+		//basic_block_demo(prog, p);
 
 		p = stringf("%s%s_inter_optd_%X.txt", get_dir(path), get_filename(path), id);
 		//inter_demo(prog, p, PRINT_TO_FILE);

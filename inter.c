@@ -113,7 +113,7 @@ static Reg * gen_expr_arg(Node *node)
 				arg = result;
 			}
 		}
-		arg->is_char = !node->with_paren && eq_oneof(2, arg->symbol->type->type, TYPE_CHAR, TYPE_CONST_CHAR);
+		arg->is_char = !node->with_paren && eq_oneof(2, node->symbol->type->type, TYPE_CHAR, TYPE_CONST_CHAR);
 		break;
 	case ND_CHARL:
 		arg = new_reg(REG_NUM);
@@ -213,6 +213,7 @@ static void gen_assign_stmt(Node *node)
 		t = emit(IR_ASSIGN_ARR, arg1, arg2, result);
 	}
 	else {	// id
+		result->is_char = result->symbol->type->type == TYPE_CHAR;
 		t = emit(IR_ASSIGN, arg1, NULL, result);
 	}
 }
